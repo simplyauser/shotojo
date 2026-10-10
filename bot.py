@@ -823,6 +823,7 @@ async def banpanel_cmd(ctx):
 #  -maintenance [on|off]
 # ════════════════════════════════════════════════════════════════
 @bot.command(name="maintenance")
+@commands.check(lambda ctx: ctx.prefix == "-")  # uniquement avec le préfixe -
 async def maintenance_cmd(ctx, mode: str = None):
     global maintenance
     if mode and mode.lower() in ("on", "oui", "1"):
