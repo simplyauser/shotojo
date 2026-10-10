@@ -45,7 +45,13 @@ async def get_prefix(bot, message):
     return ["+", "-", "&"]
 
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix=get_prefix, intents=intents, help_command=None)
+bot = commands.Bot(
+    command_prefix=get_prefix,
+    intents=intents,
+    help_command=None,
+    status=discord.Status.online,
+    activity=discord.Activity(type=discord.ActivityType.watching, name="Shotojo - Sys+"),
+)
 tree = bot.tree
 
 # ════════════════════════════════════════════════════════════════
@@ -156,6 +162,10 @@ async def check_sysplus(ctx):
 @bot.event
 async def on_ready():
     await tree.sync()
+    await bot.change_presence(
+        status=discord.Status.online,
+        activity=discord.Activity(type=discord.ActivityType.watching, name="Shotojo - Sys+"),
+    )
     if not check_tempbans.is_running():
         check_tempbans.start()
     print(f"✅ {bot.user} connecté (ID: {bot.user.id})")
