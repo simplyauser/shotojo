@@ -89,6 +89,26 @@ async def log(guild, embed):
 async def not_sys_plus(ctx):
     await ctx.reply("Tu es qui bas staff ? Prochaine fois c'est sanction !")
 
+async def try_dm(user, embed) -> bool:
+    """Envoie un MP. Retourne False si impossible (MP fermés / aucun serveur en commun)."""
+    try:
+        await user.send(embed=embed)
+        return True
+    except:
+        return False
+
+async def make_invite(guild):
+    """Crée une invitation permanente pour que le membre puisse revenir."""
+    try:
+        channels = [guild.system_channel, guild.rules_channel] + list(guild.text_channels)
+        for ch in channels:
+            if ch and ch.permissions_for(guild.me).create_instant_invite:
+                inv = await ch.create_invite(max_age=0, max_uses=0, unique=False, reason="Invitation de retour (fin de tempban)")
+                return inv.url
+    except:
+        pass
+    return None
+
 # ════════════════════════════════════════════════════════════════
 #  MIDDLEWARE : bloquer les non-Sys+
 # ════════════════════════════════════════════════════════════════
@@ -104,7 +124,8 @@ async def check_sysplus(ctx):
 @bot.event
 async def on_ready():
     await tree.sync()
-    check_tempbans.start()
+    if not check_tempbans.is_running():
+        check_tempbans.start()
     print(f"✅ {bot.user} connecté (ID: {bot.user.id})")
 
 @bot.event
@@ -135,20 +156,28 @@ async def check_tempbans():
         try:
             user = await bot.fetch_user(int(uid))
             await guild.unban(user, reason="Tempban expiré")
-            try:
-                await user.send(embed=discord.Embed(
-                    title="✅ Ton ban a expiré",
-                    description=f"Tu as été **débanni** de **{guild.name}**.\nTu peux désormais rejoindre à nouveau le serveur.",
-                    color=0x57F287,
-                ))
-            except: pass
+
+            invite = await make_invite(guild)
+            desc = (
+                f"Tu as été **débanni** de **{guild.name}**.\n"
+                "Tu peux désormais **rejoindre à nouveau le serveur**."
+            )
+            if invite:
+                desc += f"\n\n🔗 Lien pour revenir : {invite}"
+            dm_ok = await try_dm(user, discord.Embed(
+                title="✅ Ton ban a expiré",
+                description=desc,
+                color=0x57F287,
+            ))
+
             embed = discord.Embed(title="✅ Unban automatique", color=0x57F287, timestamp=datetime.now(timezone.utc))
             embed.add_field(name="👤 Membre", value=f"`{user}` (`{uid}`)", inline=True)
             embed.add_field(name="📅 Banni le", value=fmt(data["at"]), inline=True)
             embed.add_field(name="⏱️ Durée", value=data["duree_str"], inline=True)
+            embed.add_field(name="📩 MP", value="Envoyé ✅" if dm_ok else "Impossible ❌ (aucun serveur en commun / MP fermés)", inline=False)
             await log(guild, embed)
         except: pass
-        del tempbans[uid]
+        tempbans.pop(uid, None)
         save(TEMPBAN_FILE, tempbans)
 
 # ════════════════════════════════════════════════════════════════
@@ -224,17 +253,23 @@ async def ban_cmd(ctx, user_id: str = None, duree: str = None, *, raison: str = 
     }
     save(TEMPBAN_FILE, tempbans)
 
+    invite = await make_invite(ctx.guild)
+    desc = (
+        f"**Serveur :** {ctx.guild.name}\n"
+        f"**Raison :** {raison}\n"
+        f"**Par :** {ctx.author}\n"
+        f"**Durée :** {duree_str}\n"
+        f"**Banni le :** {fmt(now)}\n"
+        f"**Fin du ban :** {fmt(until)} ({fmt_rel(until)})\n\n"
+        "✅ **Tu pourras re-rejoindre le serveur une fois la durée terminée.**"
+    )
+    if invite:
+        desc += f"\n🔗 Lien pour revenir : {invite}"
+
     try:
         await user.send(embed=discord.Embed(
             title="🔨 Tu as été banni temporairement",
-            description=(
-                f"**Serveur :** {ctx.guild.name}\n"
-                f"**Raison :** {raison}\n"
-                f"**Par :** {ctx.author}\n"
-                f"**Durée :** {duree_str}\n"
-                f"**Banni le :** {fmt(now)}\n"
-                f"**Fin du ban :** {fmt(until)} ({fmt_rel(until)})"
-            ),
+            description=desc,
             color=0xFF6600,
         ))
     except: pass
@@ -374,11 +409,11 @@ async def flamme_slash(interaction: discord.Interaction, user_id: str, raison: s
     ))
 
 # ════════════════════════════════════════════════════════════════
-#  /wet-info <id>
+#  /flamme-info <id>
 # ════════════════════════════════════════════════════════════════
-@tree.command(name="wet-info", description="Infos sur une flamme [Sys+]")
+@tree.command(name="flamme-info", description="Infos sur une flamme [Sys+]")
 @app_commands.describe(user_id="ID Discord du membre")
-async def wet_info(interaction: discord.Interaction, user_id: str):
+async def flamme_info(interaction: discord.Interaction, user_id: str):
     if not is_sys_plus(interaction.user.id):
         return await interaction.response.send_message(
             "Tu es qui bas staff ? Prochaine fois c'est sanction !", ephemeral=True)
@@ -404,6 +439,108 @@ async def wet_info(interaction: discord.Interaction, user_id: str):
     embed.set_footer(text="Sanction maximale — Ban définitif + IP signalée")
     if avatar: embed.set_thumbnail(url=avatar)
     await interaction.response.send_message(embed=embed)
+
+# ════════════════════════════════════════════════════════════════
+#  /unflamme <id>
+# ════════════════════════════════════════════════════════════════
+@tree.command(name="unflamme", description="Retire une flamme (unban + retrait de la blacklist) [Sys+]")
+@app_commands.describe(user_id="ID Discord du membre")
+async def unflamme_slash(interaction: discord.Interaction, user_id: str):
+    if not is_sys_plus(interaction.user.id):
+        return await interaction.response.send_message(
+            "Tu es qui bas staff ? Prochaine fois c'est sanction !", ephemeral=True)
+
+    uid = str(user_id).strip()
+    if uid not in flammes:
+        return await interaction.response.send_message(
+            embed=discord.Embed(description="❌ Aucune flamme trouvée pour cet ID.", color=0xFF0000),
+            ephemeral=True)
+    try:
+        user = await bot.fetch_user(int(uid))
+    except:
+        return await interaction.response.send_message("❌ ID invalide.", ephemeral=True)
+
+    try:
+        await interaction.guild.unban(user, reason=f"[UNFLAMME] par {interaction.user}")
+    except discord.NotFound:
+        pass  # pas banni sur le serveur, on retire quand même la flamme
+    except discord.Forbidden:
+        return await interaction.response.send_message("❌ Permissions insuffisantes.", ephemeral=True)
+
+    data = flammes.pop(uid)
+    blacklist.pop(uid, None)
+    save(FLAMME_FILE, flammes)
+    save(BL_FILE, blacklist)
+
+    now = now_ts()
+    invite = await make_invite(interaction.guild)
+    desc = f"Ta **flamme** sur **{interaction.guild.name}** a été **levée**.\nTu peux de nouveau rejoindre le serveur."
+    if invite:
+        desc += f"\n\n🔗 Lien pour revenir : {invite}"
+    dm_ok = await try_dm(user, discord.Embed(title="✅ Flamme levée", description=desc, color=0x57F287))
+
+    embed_log = discord.Embed(title="✅ UNFLAMME", color=0x57F287, timestamp=datetime.now(timezone.utc))
+    embed_log.add_field(name="👤 Membre", value=f"`{user}` (`{uid}`)", inline=True)
+    embed_log.add_field(name="🛡️ Par", value=interaction.user.mention, inline=True)
+    embed_log.add_field(name="📅 Date", value=f"{fmt(now)}\n{fmt_rel(now)}", inline=True)
+    embed_log.add_field(name="📝 Raison de la flamme", value=data["raison"], inline=False)
+    embed_log.add_field(name="📩 MP", value="Envoyé ✅" if dm_ok else "Impossible ❌", inline=True)
+    await log(interaction.guild, embed_log)
+
+    await interaction.response.send_message(embed=discord.Embed(
+        title="✅ Flamme retirée",
+        description=f"**{user}** n'est plus flammé (unban + retiré de la blacklist).",
+        color=0x57F287,
+    ))
+
+# ════════════════════════════════════════════════════════════════
+#  /unban-all  (ne touche pas aux blacklist / flammes)
+# ════════════════════════════════════════════════════════════════
+@tree.command(name="unban-all", description="Déban tout le monde sauf les blacklist et flammes [Sys+]")
+async def unban_all_slash(interaction: discord.Interaction):
+    if not is_sys_plus(interaction.user.id):
+        return await interaction.response.send_message(
+            "Tu es qui bas staff ? Prochaine fois c'est sanction !", ephemeral=True)
+
+    await interaction.response.defer()
+    guild = interaction.guild
+    protected = set(blacklist.keys()) | set(flammes.keys())
+    unbanned = skipped = failed = 0
+
+    async for entry in guild.bans(limit=None):
+        uid = str(entry.user.id)
+        if uid in protected:
+            skipped += 1
+            continue
+        try:
+            await guild.unban(entry.user, reason=f"[UNBAN-ALL] par {interaction.user}")
+            tempbans.pop(uid, None)
+            unbanned += 1
+        except:
+            failed += 1
+        await asyncio.sleep(0.5)  # évite le rate limit
+
+    save(TEMPBAN_FILE, tempbans)
+
+    now = now_ts()
+    embed_log = discord.Embed(title="🔓 UNBAN-ALL", color=0x57F287, timestamp=datetime.now(timezone.utc))
+    embed_log.add_field(name="🛡️ Par", value=interaction.user.mention, inline=True)
+    embed_log.add_field(name="✅ Débannis", value=str(unbanned), inline=True)
+    embed_log.add_field(name="🚫 Ignorés (BL/flamme)", value=str(skipped), inline=True)
+    if failed:
+        embed_log.add_field(name="⚠️ Échecs", value=str(failed), inline=True)
+    embed_log.add_field(name="📅 Date", value=f"{fmt(now)}\n{fmt_rel(now)}", inline=False)
+    await log(guild, embed_log)
+
+    await interaction.followup.send(embed=discord.Embed(
+        title="🔓 Unban-all terminé",
+        description=(
+            f"✅ **{unbanned}** membre(s) débanni(s)\n"
+            f"🚫 **{skipped}** ignoré(s) (blacklist / flamme)\n"
+            + (f"⚠️ **{failed}** échec(s)\n" if failed else "")
+        ),
+        color=0x57F287,
+    ))
 
 # ════════════════════════════════════════════════════════════════
 #  -help
@@ -437,8 +574,14 @@ async def help_cmd(ctx):
         name="🔥 Flamme (slash)",
         value=(
             "`/flamme <id> <raison>` — Ban définitif toutes plateformes\n"
-            "`/wet-info <id>` — Infos sur une flamme"
+            "`/flamme-info <id>` — Infos sur une flamme\n"
+            "`/unflamme <id>` — Retire une flamme (unban + retrait BL)"
         ),
+        inline=False,
+    )
+    embed.add_field(
+        name="🔓 Unban",
+        value="`/unban-all` — Déban tout le monde sauf blacklist et flammes",
         inline=False,
     )
     embed.add_field(
