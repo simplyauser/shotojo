@@ -160,15 +160,8 @@ async def check_prefix_and_sysplus(ctx):
     cmd_name = ctx.command.name if ctx.command else None
     expected = PREFIX_RULES.get(cmd_name)
 
-    # Mauvais préfixe
+    # Mauvais préfixe : on ignore silencieusement
     if expected and ctx.prefix != expected:
-        if is_sys_plus(ctx.author.id):
-            msg = await ctx.reply(f"❌ Mauvais préfixe — cette commande utilise `{expected}{cmd_name}`")
-            await asyncio.sleep(3)
-            try: await ctx.message.delete()
-            except: pass
-            try: await msg.delete()
-            except: pass
         raise commands.CheckFailure()
 
     # Pas Sys+
@@ -255,7 +248,7 @@ async def bl_cmd(ctx, user_id: str = None, *, raison: str = "Aucune raison"):
 # ════════════════════════════════════════════════════════════════
 @bot.command(name="ban")
 async def ban_cmd(ctx, user_id: str = None, duree: str = None, *, raison: str = "Aucune raison"):
-    if not user_id or not duree: return await ctx.reply("❌ `+ban <id> <durée> <raison>` — ex: `+ban 123 1h30m Spam`")
+    if not user_id or not duree: return await ctx.reply("❌ `+ban <id> <durée> <raison>` ex: `+ban 123 1h30m Spam`")
     try: uid_int = int(user_id); user = await bot.fetch_user(uid_int)
     except: return await ctx.reply("❌ ID invalide.")
     seconds = parse_duration(duree)
