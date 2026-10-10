@@ -44,13 +44,20 @@ flammes   = load(FLAMME_FILE)   # uid -> {raison, by, at}
 async def get_prefix(bot, message):
     return ["+", "-", "&"]
 
+def make_activity():
+    return discord.Activity(
+        type=discord.ActivityType.watching,
+        name="Shotojo \U0001F338 #\U0001F1EF\U0001F1F5",   # Shotojo 🌸 #🇯🇵
+        state="Nous vous préparons de grandes choses",
+    )
+
 intents = discord.Intents.all()
 bot = commands.Bot(
     command_prefix=get_prefix,
     intents=intents,
     help_command=None,
     status=discord.Status.online,
-    activity=discord.Activity(type=discord.ActivityType.watching, name="Shotojo - Sys+"),
+    activity=make_activity(),
 )
 tree = bot.tree
 
@@ -164,7 +171,7 @@ async def on_ready():
     await tree.sync()
     await bot.change_presence(
         status=discord.Status.online,
-        activity=discord.Activity(type=discord.ActivityType.watching, name="Shotojo - Sys+"),
+        activity=make_activity(),
     )
     if not check_tempbans.is_running():
         check_tempbans.start()
