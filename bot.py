@@ -6,7 +6,7 @@ import json
 import os
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 # ════════════════════════════════════════════════════════════════
 #  CONFIG
@@ -86,8 +86,40 @@ async def log(guild, embed):
     ch = guild.get_channel(LOGS_ID)
     if ch: await ch.send(embed=embed)
 
+# Compteur de tentatives des non-Sys+ (en mémoire) : 2e tentative = timeout 1 min
+violations = {}
+VIOLATION_LIMIT = 2
+TIMEOUT_MIN = 1
+
+async def sys_violation(member) -> str:
+    """Appelé quand un non-Sys+ tente une commande. Retourne le message à envoyer."""
+    uid = member.id
+    violations[uid] = violations.get(uid, 0) + 1
+
+    if violations[uid] < VIOLATION_LIMIT:
+        return "Tu es qui bas staff ? Prochaine fois c'est sanction !"
+
+    violations.pop(uid, None)
+    guild = getattr(member, "guild", None)
+    try:
+        await member.timeout(timedelta(minutes=TIMEOUT_MIN), reason="Tentative d'utilisation de commandes Sys+")
+        sanction = f"🔇 Je t'avais prévenu, t'es **timeout {TIMEOUT_MIN} minute**."
+        ok = True
+    except Exception:
+        sanction = "Je t'avais prévenu... (timeout impossible, permissions insuffisantes)"
+        ok = False
+
+    if guild:
+        embed = discord.Embed(title="🔇 Auto-timeout", color=0xFF6600, timestamp=datetime.now(timezone.utc))
+        embed.add_field(name="👤 Membre", value=f"{member.mention} (`{member.id}`)", inline=True)
+        embed.add_field(name="📝 Raison", value="Tentatives de commandes Sys+", inline=True)
+        embed.add_field(name="⏱️ Durée", value=f"`{TIMEOUT_MIN} min`" if ok else "Échec ❌", inline=True)
+        try: await log(guild, embed)
+        except Exception: pass
+    return sanction
+
 async def not_sys_plus(ctx):
-    await ctx.reply("Tu es qui bas staff ? Prochaine fois c'est sanction !")
+    await ctx.reply(await sys_violation(ctx.author))
 
 async def try_dm(user, embed) -> bool:
     """Envoie un MP. Retourne False si impossible (MP fermés / aucun serveur en commun)."""
@@ -407,7 +439,7 @@ async def unbl_cmd(ctx, user_id: str = None):
 async def flamme_slash(interaction: discord.Interaction, user_id: str, raison: str = "Aucune raison"):
     if not is_sys_plus(interaction.user.id):
         return await interaction.response.send_message(
-            "Tu es qui bas staff ? Prochaine fois c'est sanction !", ephemeral=True)
+            await sys_violation(interaction.user), ephemeral=True)
     try:
         user = await bot.fetch_user(int(user_id))
     except:
@@ -463,7 +495,7 @@ async def flamme_slash(interaction: discord.Interaction, user_id: str, raison: s
 async def flamme_info(interaction: discord.Interaction, user_id: str):
     if not is_sys_plus(interaction.user.id):
         return await interaction.response.send_message(
-            "Tu es qui bas staff ? Prochaine fois c'est sanction !", ephemeral=True)
+            await sys_violation(interaction.user), ephemeral=True)
     uid = str(user_id).strip()
     data = flammes.get(uid)
     if not data:
@@ -495,7 +527,7 @@ async def flamme_info(interaction: discord.Interaction, user_id: str):
 async def unflamme_slash(interaction: discord.Interaction, user_id: str):
     if not is_sys_plus(interaction.user.id):
         return await interaction.response.send_message(
-            "Tu es qui bas staff ? Prochaine fois c'est sanction !", ephemeral=True)
+            await sys_violation(interaction.user), ephemeral=True)
 
     uid = str(user_id).strip()
     if uid not in flammes:
@@ -547,7 +579,7 @@ async def unflamme_slash(interaction: discord.Interaction, user_id: str):
 async def unban_all_slash(interaction: discord.Interaction):
     if not is_sys_plus(interaction.user.id):
         return await interaction.response.send_message(
-            "Tu es qui bas staff ? Prochaine fois c'est sanction !", ephemeral=True)
+            await sys_violation(interaction.user), ephemeral=True)
 
     await interaction.response.defer()
     guild = interaction.guild
