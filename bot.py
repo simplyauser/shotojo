@@ -42,7 +42,7 @@ flammes   = load(FLAMME_FILE)   # uid -> {raison, by, at}
 #  BOT
 # ════════════════════════════════════════════════════════════════
 async def get_prefix(bot, message):
-    return ["+", "-"]
+    return ["+", "-", "&"]
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix=get_prefix, intents=intents, help_command=None)
@@ -351,6 +351,53 @@ async def blinfo_cmd(ctx, user_id: str = None):
     embed.set_footer(text="Sanction permanente — Aucune expiration")
     if avatar: embed.set_thumbnail(url=avatar)
     await ctx.reply(embed=embed)
+
+# ════════════════════════════════════════════════════════════════
+#  &unbl <id>
+# ════════════════════════════════════════════════════════════════
+@bot.command(name="unbl")
+async def unbl_cmd(ctx, user_id: str = None):
+    if not user_id:
+        return await ctx.reply("❌ `&unbl <id>`")
+    uid = str(user_id).strip()
+    if uid in flammes:
+        return await ctx.reply("🔥 Cette personne est **flammée**, utilise `/unflamme` à la place.")
+    if uid not in blacklist:
+        return await ctx.reply(embed=discord.Embed(description="❌ Cet ID n'est pas blacklisté.", color=0xFF0000))
+    try:
+        user = await bot.fetch_user(int(uid))
+    except:
+        return await ctx.reply("❌ ID invalide.")
+
+    try:
+        await ctx.guild.unban(user, reason=f"[UNBL] par {ctx.author}")
+    except discord.NotFound:
+        pass  # pas banni sur le serveur, on retire quand même la blacklist
+    except discord.Forbidden:
+        return await ctx.reply("❌ Permissions insuffisantes pour unban.")
+
+    data = blacklist.pop(uid)
+    save(BL_FILE, blacklist)
+
+    now = now_ts()
+    invite = await make_invite(ctx.guild)
+    desc = f"Ta **blacklist** sur **{ctx.guild.name}** a été **levée**.\nTu peux de nouveau rejoindre le serveur."
+    if invite:
+        desc += f"\n\n🔗 Lien pour revenir : {invite}"
+    dm_ok = await try_dm(user, discord.Embed(title="✅ Blacklist levée", description=desc, color=0x57F287))
+
+    embed_log = discord.Embed(title="✅ UNBL", color=0x57F287, timestamp=datetime.now(timezone.utc))
+    embed_log.add_field(name="👤 Membre", value=f"`{user}` (`{uid}`)", inline=True)
+    embed_log.add_field(name="🛡️ Par", value=ctx.author.mention, inline=True)
+    embed_log.add_field(name="📅 Date", value=f"{fmt(now)}\n{fmt_rel(now)}", inline=True)
+    embed_log.add_field(name="📝 Raison de la blacklist", value=data["raison"], inline=False)
+    embed_log.add_field(name="📩 MP", value="Envoyé ✅" if dm_ok else "Impossible ❌", inline=True)
+    await log(ctx.guild, embed_log)
+
+    await ctx.reply(embed=discord.Embed(
+        description=f"✅ **{user}** a été retiré de la blacklist et débanni.",
+        color=0x57F287,
+    ))
 
 # ════════════════════════════════════════════════════════════════
 #  /flamme <id> <raison>
@@ -719,7 +766,7 @@ async def banpanel_cmd(ctx):
 async def help_cmd(ctx):
     embed = discord.Embed(
         title="📖 Aide — Commandes Sys+",
-        description="Préfixes disponibles : `+` et `-`\nToutes les commandes sont réservées aux **Sys+**.",
+        description="Préfixes disponibles : `+`, `-` et `&`\nToutes les commandes sont réservées aux **Sys+**.",
         color=0x5865F2,
         timestamp=datetime.now(timezone.utc),
     )
@@ -727,6 +774,7 @@ async def help_cmd(ctx):
         name="🚫 Blacklist",
         value=(
             "`+bl <id> <raison>` — Blacklist + ban permanent\n"
+            "`&unbl <id>` — Retire une blacklist + unban\n"
             "`-blinfo <id>` — Infos sur une blacklist"
         ),
         inline=False,
