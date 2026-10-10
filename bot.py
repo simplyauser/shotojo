@@ -67,7 +67,7 @@ async def apply_presence():
     if maintenance:
         await bot.change_presence(
             status=discord.Status.dnd,
-            activity=discord.Game(name="Maintenance en cours"),
+            activity=discord.Game(name="\U0001F527 Maintenance en cours"),   # 🔧
         )
     else:
         await bot.change_presence(
