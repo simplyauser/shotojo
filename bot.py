@@ -406,6 +406,50 @@ async def wet_info(interaction: discord.Interaction, user_id: str):
     await interaction.response.send_message(embed=embed)
 
 # ════════════════════════════════════════════════════════════════
+#  -help
+# ════════════════════════════════════════════════════════════════
+@bot.command(name="help")
+async def help_cmd(ctx):
+    embed = discord.Embed(
+        title="📖 Aide — Commandes Sys+",
+        description="Préfixes disponibles : `+` et `-`\nToutes les commandes sont réservées aux **Sys+**.",
+        color=0x5865F2,
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.add_field(
+        name="🚫 Blacklist",
+        value=(
+            "`+bl <id> <raison>` — Blacklist + ban permanent\n"
+            "`-blinfo <id>` — Infos sur une blacklist"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="🔨 Tempban",
+        value=(
+            "`+ban <id> <durée> <raison>` — Ban temporaire\n"
+            "Durées : `s`, `m`, `h`, `j` (ex: `1h30m`, `2j`)\n"
+            "`-baninfo <id>` — Infos sur un tempban"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="🔥 Flamme (slash)",
+        value=(
+            "`/flamme <id> <raison>` — Ban définitif toutes plateformes\n"
+            "`/wet-info <id>` — Infos sur une flamme"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="❓ Aide",
+        value="`-help` — Affiche ce message",
+        inline=False,
+    )
+    embed.set_footer(text=f"Demandé par {ctx.author}", icon_url=ctx.author.display_avatar.url)
+    await ctx.reply(embed=embed)
+
+# ════════════════════════════════════════════════════════════════
 #  LANCEMENT
 # ════════════════════════════════════════════════════════════════
 bot.run(os.environ["TOKEN"])
