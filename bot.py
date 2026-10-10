@@ -61,6 +61,20 @@ bot = commands.Bot(
 )
 tree = bot.tree
 
+maintenance = False
+
+async def apply_presence():
+    if maintenance:
+        await bot.change_presence(
+            status=discord.Status.dnd,
+            activity=discord.Game(name="Maintenance en cours"),
+        )
+    else:
+        await bot.change_presence(
+            status=discord.Status.online,
+            activity=make_activity(),
+        )
+
 # ════════════════════════════════════════════════════════════════
 #  HELPERS
 # ════════════════════════════════════════════════════════════════
@@ -169,10 +183,7 @@ async def check_sysplus(ctx):
 @bot.event
 async def on_ready():
     await tree.sync()
-    await bot.change_presence(
-        status=discord.Status.online,
-        activity=make_activity(),
-    )
+    await apply_presence()
     if not check_tempbans.is_running():
         check_tempbans.start()
     print(f"✅ {bot.user} connecté (ID: {bot.user.id})")
@@ -809,6 +820,43 @@ async def banpanel_cmd(ctx):
     await msg.edit(content=None, embed=await view.build(), view=view)
 
 # ════════════════════════════════════════════════════════════════
+#  -maintenance [on|off]
+# ════════════════════════════════════════════════════════════════
+@bot.command(name="maintenance")
+async def maintenance_cmd(ctx, mode: str = None):
+    global maintenance
+    if mode and mode.lower() in ("on", "oui", "1"):
+        maintenance = True
+    elif mode and mode.lower() in ("off", "non", "0"):
+        maintenance = False
+    else:
+        maintenance = not maintenance  # sans argument : bascule
+
+    await apply_presence()
+
+    if maintenance:
+        embed = discord.Embed(
+            title="🔧 Maintenance activée",
+            description="Le bot est en **Ne pas déranger** avec le statut **Maintenance en cours**.\nRefais `-maintenance` pour le remettre normal.",
+            color=0xED4245,
+        )
+    else:
+        embed = discord.Embed(
+            title="✅ Maintenance désactivée",
+            description="Le bot est de nouveau **En ligne** avec son statut habituel.",
+            color=0x57F287,
+        )
+    await ctx.reply(embed=embed)
+
+    log_embed = discord.Embed(
+        title="🔧 Maintenance " + ("ON" if maintenance else "OFF"),
+        color=0xED4245 if maintenance else 0x57F287,
+        timestamp=datetime.now(timezone.utc),
+    )
+    log_embed.add_field(name="🛡️ Par", value=ctx.author.mention, inline=True)
+    await log(ctx.guild, log_embed)
+
+# ════════════════════════════════════════════════════════════════
 #  -help
 # ════════════════════════════════════════════════════════════════
 @bot.command(name="help")
@@ -854,6 +902,11 @@ async def help_cmd(ctx):
     embed.add_field(
         name="🛡️ Panel",
         value="`-banpanel` — Liste détaillée de tous les bans (tempban, BL, flamme, manuels)",
+        inline=False,
+    )
+    embed.add_field(
+        name="🔧 Maintenance",
+        value="`-maintenance [on|off]` — Bot en Ne pas déranger + statut \"Maintenance en cours\" (sans argument : bascule)",
         inline=False,
     )
     embed.add_field(
