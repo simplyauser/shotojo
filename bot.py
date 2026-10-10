@@ -543,6 +543,176 @@ async def unban_all_slash(interaction: discord.Interaction):
     ))
 
 # ════════════════════════════════════════════════════════════════
+#  -banpanel  (tempbans + blacklist + flammes + bans manuels)
+# ════════════════════════════════════════════════════════════════
+PANEL_PER_PAGE = 4
+CATS = {
+    "tempban": ("🔨", "Tempban", 0xFF6600),
+    "bl":      ("🚫", "Blacklist", 0xFF0000),
+    "flamme":  ("🔥", "Flamme", 0xE74C3C),
+    "manuel":  ("⚖️", "Ban manuel", 0x95A5A6),
+}
+
+def cut(text, n=250):
+    text = str(text)
+    return text if len(text) <= n else text[:n - 1] + "…"
+
+async def collect_bans(guild):
+    entries = []
+    for uid, d in tempbans.items():
+        entries.append({"type": "tempban", "uid": uid, "data": d, "at": d.get("at", 0), "user": None})
+    for uid, d in flammes.items():
+        entries.append({"type": "flamme", "uid": uid, "data": d, "at": d.get("at", 0), "user": None})
+    for uid, d in blacklist.items():
+        if uid in flammes:  # déjà affiché comme flamme
+            continue
+        entries.append({"type": "bl", "uid": uid, "data": d, "at": d.get("at", 0), "user": None})
+
+    known = set(tempbans) | set(blacklist) | set(flammes)
+    try:
+        async for e in guild.bans(limit=None):
+            uid = str(e.user.id)
+            if uid in known:
+                continue
+            entries.append({"type": "manuel", "uid": uid, "data": {"raison": e.reason or "Aucune raison"},
+                            "at": None, "user": e.user})
+    except Exception:
+        pass
+
+    entries.sort(key=lambda x: x["at"] or 0, reverse=True)
+    return entries
+
+async def entry_name(entry):
+    if entry["user"]:
+        return str(entry["user"])
+    try:
+        u = await bot.fetch_user(int(entry["uid"]))
+        return str(u)
+    except Exception:
+        return "Utilisateur inconnu"
+
+def entry_value(entry) -> str:
+    t, uid, d = entry["type"], entry["uid"], entry["data"]
+    lines = [f"🆔 `{uid}`"]
+    if t == "tempban":
+        remaining = max(0, d["until"] - now_ts())
+        lines += [
+            f"🛡️ **Par :** {d['by']}",
+            f"⏱️ **Durée :** `{d['duree_str']}`  •  ⏳ **Reste :** `{fmt_duration(int(remaining))}`",
+            f"📅 **Banni le :** {fmt(d['at'])} ({fmt_rel(d['at'])})",
+            f"🔓 **Fin :** {fmt(d['until'])} ({fmt_rel(d['until'])})",
+            f"📝 **Raison :** {cut(d['raison'])}",
+        ]
+    elif t in ("bl", "flamme"):
+        lines += [
+            f"🛡️ **Par :** {d['by']}",
+            f"📅 **Date :** {fmt(d['at'])} ({fmt_rel(d['at'])})",
+            f"📝 **Raison :** {cut(d['raison'])}",
+            "♾️ **Permanent**" + (" — IP signalée" if t == "flamme" else ""),
+        ]
+    else:
+        lines += [
+            f"📝 **Raison :** {cut(d['raison'])}",
+            "ℹ️ Ban fait à la main (hors bot)",
+        ]
+    return "\n".join(lines)[:1024]
+
+class BanPanel(discord.ui.View):
+    def __init__(self, author_id, entries):
+        super().__init__(timeout=180)
+        self.author_id = author_id
+        self.entries = entries
+        self.filter = "all"
+        self.page = 0
+        self.message = None
+
+    def filtered(self):
+        if self.filter == "all":
+            return self.entries
+        return [e for e in self.entries if e["type"] == self.filter]
+
+    def total_pages(self):
+        return max(1, -(-len(self.filtered()) // PANEL_PER_PAGE))
+
+    async def build(self):
+        items = self.filtered()
+        pages = self.total_pages()
+        self.page = max(0, min(self.page, pages - 1))
+        chunk = items[self.page * PANEL_PER_PAGE:(self.page + 1) * PANEL_PER_PAGE]
+
+        counts = {k: sum(1 for e in self.entries if e["type"] == k) for k in CATS}
+        embed = discord.Embed(
+            title="🛡️ Panel des bans",
+            description=(
+                f"**Total : {len(self.entries)}**\n"
+                f"🔨 Tempbans : `{counts['tempban']}`  •  🚫 Blacklist : `{counts['bl']}`\n"
+                f"🔥 Flammes : `{counts['flamme']}`  •  ⚖️ Bans manuels : `{counts['manuel']}`"
+            ),
+            color=0x5865F2,
+            timestamp=datetime.now(timezone.utc),
+        )
+        if not chunk:
+            embed.add_field(name="Aucun résultat", value="Aucun ban dans cette catégorie.", inline=False)
+        for e in chunk:
+            emoji, label, _ = CATS[e["type"]]
+            name = await entry_name(e)
+            embed.add_field(name=f"{emoji} {label} — {name}"[:256], value=entry_value(e), inline=False)
+        filt = "Tous" if self.filter == "all" else CATS[self.filter][1]
+        embed.set_footer(text=f"Filtre : {filt}  •  Page {self.page + 1}/{pages}")
+        return embed
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("❌ Ce panel n'est pas à toi.", ephemeral=True)
+            return False
+        return True
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message:
+            try: await self.message.edit(view=self)
+            except Exception: pass
+
+    @discord.ui.select(
+        placeholder="Filtrer par type…",
+        options=[
+            discord.SelectOption(label="Tous", value="all", emoji="📋"),
+            discord.SelectOption(label="Tempbans", value="tempban", emoji="🔨"),
+            discord.SelectOption(label="Blacklist", value="bl", emoji="🚫"),
+            discord.SelectOption(label="Flammes", value="flamme", emoji="🔥"),
+            discord.SelectOption(label="Bans manuels", value="manuel", emoji="⚖️"),
+        ],
+    )
+    async def filter_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.filter = select.values[0]
+        self.page = 0
+        await interaction.response.edit_message(embed=await self.build(), view=self)
+
+    @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
+    async def prev_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = (self.page - 1) % self.total_pages()
+        await interaction.response.edit_message(embed=await self.build(), view=self)
+
+    @discord.ui.button(label="▶", style=discord.ButtonStyle.secondary)
+    async def next_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = (self.page + 1) % self.total_pages()
+        await interaction.response.edit_message(embed=await self.build(), view=self)
+
+    @discord.ui.button(label="🔄 Actualiser", style=discord.ButtonStyle.primary)
+    async def refresh_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.entries = await collect_bans(interaction.guild)
+        await interaction.response.edit_message(embed=await self.build(), view=self)
+
+@bot.command(name="banpanel")
+async def banpanel_cmd(ctx):
+    msg = await ctx.reply("⏳ Chargement du panel…")
+    entries = await collect_bans(ctx.guild)
+    view = BanPanel(ctx.author.id, entries)
+    view.message = msg
+    await msg.edit(content=None, embed=await view.build(), view=view)
+
+# ════════════════════════════════════════════════════════════════
 #  -help
 # ════════════════════════════════════════════════════════════════
 @bot.command(name="help")
@@ -582,6 +752,11 @@ async def help_cmd(ctx):
     embed.add_field(
         name="🔓 Unban",
         value="`/unban-all` — Déban tout le monde sauf blacklist et flammes",
+        inline=False,
+    )
+    embed.add_field(
+        name="🛡️ Panel",
+        value="`-banpanel` — Liste détaillée de tous les bans (tempban, BL, flamme, manuels)",
         inline=False,
     )
     embed.add_field(
