@@ -14,7 +14,8 @@ SYS_PLUS_IDS         = {1419320803199029402, 1514099294611701842}
 CONTRIBUTOR_ROLE_IDS = {1556148445041926174}   # Pétale — ajouter les IDs supérieurs ici
 GUILD_ID             = int(os.getenv("GUILD_ID"))
 LOGS_ID              = int(os.getenv("LOGS_CHANNEL_ID", "0"))
-ABUSE_BOT_ID         = 1558327588710121554
+MUTED_ROLE_ID        = 1558626042812301394
+SUPPORT_CONTACT_ID   = 1419320803199029402  # Contact en attendant le serveur Support
 
 BL_FILE        = "blacklist.json"
 TEMPBAN_FILE   = "tempbans.json"
@@ -69,8 +70,8 @@ blacklist    = load(BL_FILE)
 tempbans     = load(TEMPBAN_FILE)
 tempetes     = load(TEMPETE_FILE)
 sanctions_db = load(SANCTIONS_FILE) or {"next_id": 1, "sanctions": {}}
-if "next_id"    not in sanctions_db: sanctions_db["next_id"]    = 1
-if "sanctions"  not in sanctions_db: sanctions_db["sanctions"]  = {}
+if "next_id"   not in sanctions_db: sanctions_db["next_id"]   = 1
+if "sanctions" not in sanctions_db: sanctions_db["sanctions"] = {}
 
 def save_sanctions():
     save(SANCTIONS_FILE, sanctions_db)
@@ -172,30 +173,34 @@ async def make_invite(guild):
     except: pass
     return None
 
-violations    = {}
-VIOLATION_LIMIT = 2
-TIMEOUT_MIN     = 1
+def dm_footer_sanctions():
+    return f"Pour toute contestation, envoie un MP à <@{SUPPORT_CONTACT_ID}> en attendant l'ouverture du serveur Support."
 
+# ════════════════════════════════════════════════
+# VIOLATIONS (commandes non autorisées)
+# ════════════════════════════════════════════════
 async def sys_violation(member):
-    uid = member.id
-    violations[uid] = violations.get(uid, 0) + 1
-    if violations[uid] < VIOLATION_LIMIT:
-        return "Tu es qui bas staff ? Prochaine fois c'est sanction !"
-    violations.pop(uid, None)
-    guild = getattr(member, "guild", None)
+    """Timeout immédiat dès la première tentative de commande non autorisée."""
     try:
-        await member.timeout(timedelta(minutes=TIMEOUT_MIN), reason="Tentative de commandes Sys+")
-        sanction = f"🔇 Je t'avais prévenu, t'es timeout {TIMEOUT_MIN} minute."; ok = True
+        await member.timeout(timedelta(minutes=1), reason="Tentative de commande non autorisée")
+        msg = "🔇 Accès refusé. Tu viens d'être timeout 1 minute."
+        ok  = True
     except:
-        sanction = "Je t'avais prévenu... (timeout impossible)"; ok = False
+        msg = "🔇 Accès refusé."
+        ok  = False
+    guild = getattr(member, "guild", None)
     if guild:
-        e = discord.Embed(title="🔇 Auto-timeout", color=0xFF6600, timestamp=datetime.now(timezone.utc))
-        e.add_field(name="👤", value=f"{member.mention} (`{member.id}`)", inline=True)
-        e.add_field(name="📝", value="Tentatives de commandes Sys+", inline=True)
-        e.add_field(name="⏱️", value=f"`{TIMEOUT_MIN} min`" if ok else "Échec", inline=True)
+        e = discord.Embed(
+            title="🔇 Timeout automatique",
+            description=f"{member.mention} a tenté d'utiliser une commande non autorisée.",
+            color=0xFF4500,
+            timestamp=datetime.now(timezone.utc))
+        e.add_field(name="👤 Membre",  value=f"{member.mention}\n`{member.id}`", inline=True)
+        e.add_field(name="⏱️ Durée",  value="`1 minute`" if ok else "Échec timeout", inline=True)
+        e.add_field(name="📋 Raison", value="Tentative de commande non autorisée", inline=False)
         try: await log(guild, e)
         except: pass
-    return sanction
+    return msg
 
 async def not_sys_plus(ctx):
     await ctx.reply(await sys_violation(ctx.author))
@@ -238,11 +243,16 @@ async def on_member_join(member):
         data = blacklist[uid]
         try:
             await member.send(embed=discord.Embed(
-                title="🚫 Accès refusé",
-                description=f"Tu es blacklisté de ce serveur.\nRaison : {data['raison']}",
+                title="🚫 Accès refusé — Shotojo",
+                description=(
+                    f"Tu es blacklisté(e) de **Shotojo**.\n"
+                    f"**Raison :** {data['raison']}\n\n"
+                    f"Il s'agit d'un ban IP définitif.\n\n"
+                    f"{dm_footer_sanctions()}"
+                ),
                 color=0xFF0000))
         except: pass
-        await member.ban(reason=f"[Blacklist] {data['raison']}", delete_message_days=0)
+        await member.ban(reason=f"[Blacklist — Ban IP] {data['raison']}", delete_message_days=0)
 
 # ════════════════════════════════════════════════
 # TASKS
@@ -257,24 +267,40 @@ async def check_tempbans():
             user = await bot.fetch_user(int(uid))
             await guild.unban(user, reason="Tempban expiré")
             invite = await make_invite(guild)
-            desc = f"Tu as été débanni de **{guild.name}**.\nTu peux rejoindre à nouveau."
+            desc = (
+                f"Ton ban temporaire sur **{guild.name}** est expiré.\n"
+                f"Tu peux désormais rejoindre le serveur."
+            )
             if invite: desc += f"\n\n🔗 {invite}"
-            dm_ok = await try_dm(user, discord.Embed(title="✅ Ban expiré", description=desc, color=0x57F287))
+            dm_ok = await try_dm(user, discord.Embed(
+                title="✅ Ban expiré — Shotojo",
+                description=desc,
+                color=0x57F287,
+                timestamp=datetime.now(timezone.utc)))
             e = discord.Embed(title="✅ Unban automatique", color=0x57F287, timestamp=datetime.now(timezone.utc))
-            e.add_field(name="👤",       value=f"`{user}` (`{uid}`)", inline=True)
-            e.add_field(name="⏱️ Durée", value=data["duree_str"],     inline=True)
-            e.add_field(name="📩 MP",    value="✅" if dm_ok else "❌", inline=True)
+            e.add_field(name="👤 Membre", value=f"`{user}` (`{uid}`)", inline=True)
+            e.add_field(name="⏱️ Durée", value=f"`{data['duree_str']}`", inline=True)
+            e.add_field(name="📩 MP",     value="✅" if dm_ok else "❌", inline=True)
             await log(guild, e)
         except: pass
         tempbans.pop(uid, None)
         save(TEMPBAN_FILE, tempbans)
 
-@tasks.loop(minutes=5)
+@tasks.loop(minutes=1)
 async def check_mutes():
     now = now_ts(); changed = False
-    for sid, s in sanctions_db["sanctions"].items():
+    guild = bot.get_guild(GUILD_ID)
+    for sid, s in list(sanctions_db["sanctions"].items()):
         if s["type"] == "tempmute" and s.get("active") and s.get("until", 0) <= now:
-            sanctions_db["sanctions"][sid]["active"] = False; changed = True
+            sanctions_db["sanctions"][sid]["active"] = False
+            changed = True
+            if guild:
+                try:
+                    member = guild.get_member(int(s["user_id"])) or await guild.fetch_member(int(s["user_id"]))
+                    muted_role = guild.get_role(MUTED_ROLE_ID)
+                    if muted_role and muted_role in member.roles:
+                        await member.remove_roles(muted_role, reason="Mute expiré automatiquement")
+                except: pass
     if changed: save_sanctions()
 
 # ════════════════════════════════════════════════
@@ -308,7 +334,10 @@ class MuteReasonView(discord.ui.View):
         view.message = self.message
         e = discord.Embed(
             title=f"🔇 Tempmute — {self.target.display_name}",
-            description=f"Raison : **{raison}**\nChoisis la durée :", color=0xFF6600)
+            description=f"**Raison sélectionnée :** {raison}\n\nChoisis la durée :",
+            color=0xFF6600,
+            timestamp=datetime.now(timezone.utc))
+        e.set_thumbnail(url=self.target.display_avatar.url)
         await i.response.edit_message(embed=e, view=view)
 
 
@@ -381,33 +410,55 @@ class WarnReasonView(discord.ui.View):
 async def apply_tempmute(i: discord.Interaction, member: discord.Member, raison: str, duree_str: str):
     seconds = parse_dur_str(duree_str)
     now = now_ts(); until = now + seconds
+
+    muted_role = i.guild.get_role(MUTED_ROLE_ID)
+    if not muted_role:
+        return await i.response.edit_message(
+            content="❌ Rôle Muted introuvable. Vérifie l'ID dans la config.", embed=None, view=None)
     try:
-        await member.timeout(timedelta(seconds=seconds), reason=f"[Mute] {raison}")
+        await member.add_roles(muted_role, reason=f"[Mute] {raison}")
     except discord.Forbidden:
         return await i.response.edit_message(content="❌ Permissions insuffisantes.", embed=None, view=None)
     except Exception as exc:
         return await i.response.edit_message(content=f"❌ Erreur : {exc}", embed=None, view=None)
+
     sid = add_sanction(user_id=str(member.id), type_="tempmute", raison=raison,
                        duree_str=duree_str, duree_s=seconds, until=until,
                        by=str(i.user), by_id=i.user.id, at=now)
-    dm_e = discord.Embed(title="🔇 Tu as été réduit au silence",
-        description=(f"Serveur : **{i.guild.name}**\nRaison : **{raison}**\n"
-                     f"Durée : **{duree_str}**\nFin : {fmt(until)} ({fmt_rel(until)})\n\n"
-                     f"Si tu penses que c'est un abus, contacte <@{ABUSE_BOT_ID}>."),
-        color=0xFF6600, timestamp=datetime.now(timezone.utc))
+
+    dm_e = discord.Embed(
+        title="🔇 Tu as été réduit(e) au silence — Shotojo",
+        color=0xFF6600,
+        timestamp=datetime.now(timezone.utc))
+    dm_e.add_field(name="📋 Raison",   value=raison, inline=False)
+    dm_e.add_field(name="⏱️ Durée",   value=f"`{duree_str}`", inline=True)
+    dm_e.add_field(name="🔓 Fin",      value=fmt(until), inline=True)
+    dm_e.add_field(name="📅 Appliqué", value=fmt(now), inline=True)
+    dm_e.add_field(name="📩 Contact",  value=dm_footer_sanctions(), inline=False)
     dm_ok = await try_dm(member, dm_e)
+
     log_e = discord.Embed(title="🔇 Tempmute", color=0xFF6600, timestamp=datetime.now(timezone.utc))
-    log_e.add_field(name="👤",           value=f"{member.mention} (`{member.id}`)", inline=True)
-    log_e.add_field(name="🛡️ Par",      value=i.user.mention, inline=True)
+    log_e.add_field(name="👤 Membre",    value=f"{member.mention}\n`{member.id}`", inline=True)
+    log_e.add_field(name="🛡️ Par",      value=f"{i.user.mention}\n`{i.user.id}`", inline=True)
     log_e.add_field(name="⏱️ Durée",    value=f"`{duree_str}`", inline=True)
+    log_e.add_field(name="📅 Appliqué", value=f"{fmt(now)}\n{fmt_rel(now)}", inline=True)
     log_e.add_field(name="🔓 Fin",       value=f"{fmt(until)}\n{fmt_rel(until)}", inline=True)
-    log_e.add_field(name="📝 Raison",    value=raison, inline=False)
     log_e.add_field(name="📩 MP",        value="✅" if dm_ok else "❌", inline=True)
+    log_e.add_field(name="📝 Raison",    value=raison, inline=False)
     log_e.add_field(name="🆔 Sanction", value=f"`#{sid}`", inline=True)
+    log_e.set_thumbnail(url=member.display_avatar.url)
     await log(i.guild, log_e)
-    result_e = discord.Embed(title="✅ Mute appliqué",
-        description=(f"🔇 **{member}** muté **{duree_str}**\n📝 {raison}\n"
-                     f"🔓 Fin : {fmt(until)}\n🆔 Sanction `#{sid}`"), color=0xFF6600)
+
+    result_e = discord.Embed(
+        title="✅ Mute appliqué",
+        color=0xFF6600,
+        timestamp=datetime.now(timezone.utc))
+    result_e.add_field(name="👤 Membre",   value=f"{member.mention} (`{member.id}`)", inline=False)
+    result_e.add_field(name="📝 Raison",   value=raison, inline=False)
+    result_e.add_field(name="⏱️ Durée",   value=f"`{duree_str}`", inline=True)
+    result_e.add_field(name="🔓 Fin",      value=fmt(until), inline=True)
+    result_e.add_field(name="🆔 Sanction", value=f"`#{sid}`", inline=True)
+    result_e.set_thumbnail(url=member.display_avatar.url)
     await i.response.edit_message(embed=result_e, view=None)
 
 
@@ -415,20 +466,35 @@ async def apply_warn(i: discord.Interaction, member: discord.Member, raison: str
     now = now_ts()
     sid = add_sanction(user_id=str(member.id), type_="warn", raison=raison,
                        by=str(i.user), by_id=i.user.id, at=now)
-    dm_e = discord.Embed(title="⚠️ Tu as reçu un avertissement",
-        description=(f"Serveur : **{i.guild.name}**\nRaison : **{raison}**\n"
-                     f"Date : {fmt(now)}\n\nSi tu penses que c'est un abus, contacte <@{ABUSE_BOT_ID}>."),
-        color=0xFFC107, timestamp=datetime.now(timezone.utc))
+
+    dm_e = discord.Embed(
+        title="⚠️ Tu as reçu un avertissement — Shotojo",
+        color=0xFFC107,
+        timestamp=datetime.now(timezone.utc))
+    dm_e.add_field(name="📋 Raison",  value=raison, inline=False)
+    dm_e.add_field(name="📅 Date",    value=fmt(now), inline=True)
+    dm_e.add_field(name="📩 Contact", value=dm_footer_sanctions(), inline=False)
     dm_ok = await try_dm(member, dm_e)
+
     log_e = discord.Embed(title="⚠️ Warn", color=0xFFC107, timestamp=datetime.now(timezone.utc))
-    log_e.add_field(name="👤",           value=f"{member.mention} (`{member.id}`)", inline=True)
-    log_e.add_field(name="🛡️ Par",      value=i.user.mention, inline=True)
+    log_e.add_field(name="👤 Membre",    value=f"{member.mention}\n`{member.id}`", inline=True)
+    log_e.add_field(name="🛡️ Par",      value=f"{i.user.mention}\n`{i.user.id}`", inline=True)
+    log_e.add_field(name="📅 Date",      value=f"{fmt(now)}\n{fmt_rel(now)}", inline=True)
     log_e.add_field(name="📝 Raison",    value=raison, inline=False)
     log_e.add_field(name="📩 MP",        value="✅" if dm_ok else "❌", inline=True)
     log_e.add_field(name="🆔 Sanction", value=f"`#{sid}`", inline=True)
+    log_e.set_thumbnail(url=member.display_avatar.url)
     await log(i.guild, log_e)
-    result_e = discord.Embed(title="✅ Warn appliqué",
-        description=f"⚠️ **{member}** averti\n📝 {raison}\n🆔 Sanction `#{sid}`", color=0xFFC107)
+
+    result_e = discord.Embed(
+        title="✅ Warn appliqué",
+        color=0xFFC107,
+        timestamp=datetime.now(timezone.utc))
+    result_e.add_field(name="👤 Membre",   value=f"{member.mention} (`{member.id}`)", inline=False)
+    result_e.add_field(name="📝 Raison",   value=raison, inline=False)
+    result_e.add_field(name="📅 Date",     value=fmt(now), inline=True)
+    result_e.add_field(name="🆔 Sanction", value=f"`#{sid}`", inline=True)
+    result_e.set_thumbnail(url=member.display_avatar.url)
     await i.response.edit_message(embed=result_e, view=None)
 
 # ════════════════════════════════════════════════
@@ -471,13 +537,20 @@ def entry_value(entry):
     lines = [f"🆔 `{uid}`"]
     if t == "tempban":
         remaining = max(0, d["until"] - now_ts())
-        lines += [f"🛡️ Par : {d['by']}",
-                  f"⏱️ Durée : `{d['duree_str']}` — Reste : `{fmt_duration(int(remaining))}`",
-                  f"📅 Banni le : {fmt(d['at'])}",
-                  f"🔓 Fin : {fmt(d['until'])} ({fmt_rel(d['until'])})", f"📝 {cut(d['raison'])}"]
+        lines += [
+            f"🛡️ Par : <@{d['by_id']}> (`{d['by_id']}`)",
+            f"⏱️ Durée : `{d['duree_str']}` — Reste : `{fmt_duration(int(remaining))}`",
+            f"📅 Banni le : {fmt(d['at'])}",
+            f"🔓 Fin : {fmt(d['until'])} ({fmt_rel(d['until'])})",
+            f"📝 {cut(d['raison'])}",
+        ]
     elif t in ("bl", "tempete"):
-        lines += [f"🛡️ Par : {d['by']}", f"📅 {fmt(d['at'])} ({fmt_rel(d['at'])})",
-                  f"📝 {cut(d['raison'])}", "♾️ Permanent" + (" — IP signalée" if t == "tempete" else "")]
+        lines += [
+            f"🛡️ Par : <@{d['by_id']}> (`{d['by_id']}`)",
+            f"📅 {fmt(d['at'])} ({fmt_rel(d['at'])})",
+            f"📝 {cut(d['raison'])}",
+            f"♾️ Permanent — Ban IP",
+        ]
     else:
         lines += [f"📝 {cut(d['raison'])}", "ℹ️ Ban manuel"]
     return "\n".join(lines)[:1024]
@@ -499,18 +572,23 @@ class BanPanel(discord.ui.View):
         self.page = max(0, min(self.page, pages - 1))
         chunk  = items[self.page * PANEL_PER_PAGE:(self.page + 1) * PANEL_PER_PAGE]
         counts = {k: sum(1 for e in self.entries if e["type"] == k) for k in CATS}
-        e = discord.Embed(title="🛡️ Panel des bans",
-            description=(f"**Total : {len(self.entries)}**\n"
-                         f"🔨 Tempbans : `{counts['tempban']}` — 🚫 Blacklist : `{counts['bl']}`\n"
-                         f"🌪️ Tempêtes : `{counts['tempete']}` — ⚖️ Bans manuels : `{counts['manuel']}`"),
-            color=0x5865F2, timestamp=datetime.now(timezone.utc))
-        if not chunk: e.add_field(name="Aucun résultat", value="Aucun ban dans cette catégorie.", inline=False)
+        e = discord.Embed(
+            title="🛡️ Panel des bans — Shotojo",
+            description=(
+                f"**Total : {len(self.entries)} ban(s)**\n"
+                f"🔨 Tempbans : `{counts['tempban']}` · 🚫 Blacklist : `{counts['bl']}`\n"
+                f"🌪️ Tempêtes : `{counts['tempete']}` · ⚖️ Bans manuels : `{counts['manuel']}`"
+            ),
+            color=0x5865F2,
+            timestamp=datetime.now(timezone.utc))
+        if not chunk:
+            e.add_field(name="Aucun résultat", value="Aucun ban dans cette catégorie.", inline=False)
         for en in chunk:
             emoji, label, _ = CATS[en["type"]]
             name = await entry_name(en)
             e.add_field(name=f"{emoji} {label} — {name}"[:256], value=entry_value(en), inline=False)
         filt = "Tous" if self.filter == "all" else CATS[self.filter][1]
-        e.set_footer(text=f"Filtre : {filt} — Page {self.page + 1}/{pages}")
+        e.set_footer(text=f"Filtre : {filt} · Page {self.page + 1}/{pages}")
         return e
 
     async def interaction_check(self, i: discord.Interaction) -> bool:
@@ -563,27 +641,37 @@ async def bl_cmd(ctx, user_id: str = None, *, raison: str = "Aucune raison"):
     uid = str(uid_int); now = now_ts()
     blacklist[uid] = {"raison": raison, "by": str(ctx.author), "by_id": ctx.author.id, "at": now}
     save(BL_FILE, blacklist)
-    try:
-        await user.send(embed=discord.Embed(title="🚫 Tu as été blacklisté",
-            description=(f"Serveur : **{ctx.guild.name}**\nRaison : {raison}\nPar : {ctx.author}\n"
-                         f"Date : {fmt(now)}\n\nSanction permanente.\n\n"
-                         f"Si tu penses que c'est un abus, contacte <@{ABUSE_BOT_ID}>."), color=0xFF0000))
+    dm_e = discord.Embed(
+        title="🚫 Tu as été blacklisté(e) — Shotojo",
+        color=0xFF0000,
+        timestamp=datetime.now(timezone.utc))
+    dm_e.add_field(name="📋 Raison",  value=raison, inline=False)
+    dm_e.add_field(name="📅 Date",    value=fmt(now), inline=True)
+    dm_e.add_field(name="🌐 Type",    value="Ban IP permanent", inline=True)
+    dm_e.add_field(name="📩 Contact", value=dm_footer_sanctions(), inline=False)
+    try: await user.send(embed=dm_e)
     except: pass
-    try: await ctx.guild.ban(user, reason=f"[BL] {raison}", delete_message_days=0)
+    try: await ctx.guild.ban(user, reason=f"[BL — Ban IP] {raison}", delete_message_days=0)
     except discord.Forbidden: return await ctx.reply("❌ Permissions insuffisantes.")
-    e = discord.Embed(title="🚫 Blacklist", color=0xFF0000, timestamp=datetime.now(timezone.utc))
-    e.add_field(name="👤",        value=f"`{user}` (`{uid_int}`)", inline=True)
-    e.add_field(name="🛡️ Par",   value=ctx.author.mention, inline=True)
+
+    e = discord.Embed(title="🚫 Blacklist — Ban IP", color=0xFF0000, timestamp=datetime.now(timezone.utc))
+    e.add_field(name="👤 Membre", value=f"`{user}` (`{uid_int}`)", inline=True)
+    e.add_field(name="🛡️ Par",   value=f"{ctx.author.mention}\n`{ctx.author.id}`", inline=True)
+    e.add_field(name="📅 Date",   value=f"{fmt(now)}\n{fmt_rel(now)}", inline=True)
+    e.add_field(name="🌐 Type",   value="Ban IP permanent", inline=True)
     e.add_field(name="📝 Raison", value=raison, inline=False)
-    e.add_field(name="📅",        value=f"{fmt(now)}\n{fmt_rel(now)}", inline=True)
+    e.set_thumbnail(url=user.display_avatar.url)
     await log(ctx.guild, e)
-    await ctx.reply(embed=discord.Embed(description=f"🚫 **{user}** blacklisté.\n📝 {raison}", color=0xFF0000))
+    await ctx.reply(embed=discord.Embed(
+        description=f"🚫 **{user}** (`{uid_int}`) blacklisté · Ban IP\n📝 {raison}",
+        color=0xFF0000))
 
 
 # +ban
 @bot.command(name="ban")
 async def ban_cmd(ctx, user_id: str = None, duree: str = None, *, raison: str = "Aucune raison"):
-    if not user_id or not duree: return await ctx.reply("❌ `+ban <id> <durée> <raison>` ex: `+ban 123 1h30m Spam`")
+    if not user_id or not duree:
+        return await ctx.reply("❌ `+ban <id> <durée> <raison>` · ex: `+ban 123456789 1h30m Spam`")
     try: uid_int = int(user_id); user = await bot.fetch_user(uid_int)
     except: return await ctx.reply("❌ ID invalide.")
     seconds = parse_duration(duree)
@@ -592,25 +680,34 @@ async def ban_cmd(ctx, user_id: str = None, duree: str = None, *, raison: str = 
     tempbans[uid] = {"raison": raison, "by": str(ctx.author), "by_id": ctx.author.id,
                      "at": now, "until": until, "guild_id": ctx.guild.id, "duree_str": duree_str}
     save(TEMPBAN_FILE, tempbans)
-    invite = await make_invite(ctx.guild)
-    desc = (f"Serveur : **{ctx.guild.name}**\nRaison : {raison}\nPar : {ctx.author}\n"
-            f"Durée : {duree_str}\nBanni le : {fmt(now)}\nFin : {fmt(until)} ({fmt_rel(until)})\n\n"
-            f"Tu pourras revenir une fois la durée terminée.\n\n"
-            f"Si tu penses que c'est un abus, contacte <@{ABUSE_BOT_ID}>.")
-    if invite: desc += f"\n🔗 {invite}"
-    try: await user.send(embed=discord.Embed(title="🔨 Banni temporairement", description=desc, color=0xFF6600))
+
+    dm_e = discord.Embed(
+        title="🔨 Tu as été banni(e) temporairement — Shotojo",
+        color=0xFF6600,
+        timestamp=datetime.now(timezone.utc))
+    dm_e.add_field(name="📋 Raison",   value=raison, inline=False)
+    dm_e.add_field(name="⏱️ Durée",   value=f"`{duree_str}`", inline=True)
+    dm_e.add_field(name="📅 Banni le", value=fmt(now), inline=True)
+    dm_e.add_field(name="🔓 Fin",      value=f"{fmt(until)} ({fmt_rel(until)})", inline=True)
+    dm_e.add_field(name="📩 Contact",  value=dm_footer_sanctions(), inline=False)
+    try: await user.send(embed=dm_e)
     except: pass
+
     try: await ctx.guild.ban(user, reason=f"[Tempban {duree_str}] {raison}", delete_message_days=0)
     except discord.Forbidden: return await ctx.reply("❌ Permissions insuffisantes.")
+
     e = discord.Embed(title="🔨 Tempban", color=0xFF6600, timestamp=datetime.now(timezone.utc))
-    e.add_field(name="👤",        value=f"`{user}` (`{uid_int}`)", inline=True)
-    e.add_field(name="🛡️ Par",   value=ctx.author.mention, inline=True)
+    e.add_field(name="👤 Membre",  value=f"`{user}` (`{uid_int}`)", inline=True)
+    e.add_field(name="🛡️ Par",    value=f"{ctx.author.mention}\n`{ctx.author.id}`", inline=True)
     e.add_field(name="⏱️ Durée", value=f"`{duree_str}`", inline=True)
+    e.add_field(name="📅 Date",   value=f"{fmt(now)}\n{fmt_rel(now)}", inline=True)
     e.add_field(name="🔓 Fin",    value=f"{fmt(until)}\n{fmt_rel(until)}", inline=True)
     e.add_field(name="📝 Raison", value=raison, inline=False)
+    e.set_thumbnail(url=user.display_avatar.url)
     await log(ctx.guild, e)
     await ctx.reply(embed=discord.Embed(
-        description=f"🔨 **{user}** banni **{duree_str}**.\n📝 {raison}\n🔓 Fin : {fmt(until)}", color=0xFF6600))
+        description=f"🔨 **{user}** banni **{duree_str}**\n📝 {raison}\n🔓 Fin : {fmt(until)}",
+        color=0xFF6600))
 
 
 # -baninfo
@@ -618,13 +715,14 @@ async def ban_cmd(ctx, user_id: str = None, duree: str = None, *, raison: str = 
 async def baninfo_cmd(ctx, user_id: str = None):
     if not user_id: return await ctx.reply("❌ `-baninfo <id>`")
     uid = str(user_id).strip(); data = tempbans.get(uid)
-    if not data: return await ctx.reply(embed=discord.Embed(description="❌ Aucun tempban pour cet ID.", color=0xFF0000))
+    if not data:
+        return await ctx.reply(embed=discord.Embed(description="❌ Aucun tempban pour cet ID.", color=0xFF0000))
     try: user = await bot.fetch_user(int(uid)); name = str(user); avatar = user.display_avatar.url
     except: name = f"Inconnu ({uid})"; avatar = None
     remaining = max(0, data["until"] - now_ts())
     e = discord.Embed(title="🔍 Infos Tempban", color=0xFF6600, timestamp=datetime.now(timezone.utc))
-    e.add_field(name="👤",           value=f"`{name}` (`{uid}`)", inline=True)
-    e.add_field(name="🛡️ Par",      value=data["by"], inline=True)
+    e.add_field(name="👤 Membre",    value=f"`{name}`\n`{uid}`", inline=True)
+    e.add_field(name="🛡️ Par",      value=f"<@{data['by_id']}>\n`{data['by_id']}`", inline=True)
     e.add_field(name="⏱️ Durée",    value=f"`{data['duree_str']}`", inline=True)
     e.add_field(name="📅 Banni le", value=f"{fmt(data['at'])}\n{fmt_rel(data['at'])}", inline=True)
     e.add_field(name="🔓 Fin",       value=f"{fmt(data['until'])}\n{fmt_rel(data['until'])}", inline=True)
@@ -639,15 +737,17 @@ async def baninfo_cmd(ctx, user_id: str = None):
 async def blinfo_cmd(ctx, user_id: str = None):
     if not user_id: return await ctx.reply("❌ `-blinfo <id>`")
     uid = str(user_id).strip(); data = blacklist.get(uid)
-    if not data: return await ctx.reply(embed=discord.Embed(description="❌ Aucune blacklist pour cet ID.", color=0xFF0000))
+    if not data:
+        return await ctx.reply(embed=discord.Embed(description="❌ Aucune blacklist pour cet ID.", color=0xFF0000))
     try: user = await bot.fetch_user(int(uid)); name = str(user); avatar = user.display_avatar.url
     except: name = f"Inconnu ({uid})"; avatar = None
-    e = discord.Embed(title="🔍 Infos Blacklist", color=0xFF0000, timestamp=datetime.now(timezone.utc))
-    e.add_field(name="👤",        value=f"`{name}` (`{uid}`)", inline=True)
-    e.add_field(name="🛡️ Par",   value=data["by"], inline=True)
+    e = discord.Embed(title="🔍 Infos Blacklist — Ban IP", color=0xFF0000, timestamp=datetime.now(timezone.utc))
+    e.add_field(name="👤 Membre", value=f"`{name}`\n`{uid}`", inline=True)
+    e.add_field(name="🛡️ Par",   value=f"<@{data['by_id']}>\n`{data['by_id']}`", inline=True)
     e.add_field(name="📅 Date",   value=f"{fmt(data['at'])}\n{fmt_rel(data['at'])}", inline=True)
+    e.add_field(name="🌐 Type",   value="Ban IP permanent", inline=True)
     e.add_field(name="📝 Raison", value=data["raison"], inline=False)
-    e.set_footer(text="Sanction permanente")
+    e.set_footer(text="Sanction permanente — Ban IP")
     if avatar: e.set_thumbnail(url=avatar)
     await ctx.reply(embed=e)
 
@@ -657,8 +757,10 @@ async def blinfo_cmd(ctx, user_id: str = None):
 async def unbl_cmd(ctx, user_id: str = None):
     if not user_id: return await ctx.reply("❌ `&unbl <id>`")
     uid = str(user_id).strip()
-    if uid in tempetes: return await ctx.reply("🌪️ Cette personne est sous tempête, utilise `/untempete`.")
-    if uid not in blacklist: return await ctx.reply(embed=discord.Embed(description="❌ Cet ID n'est pas blacklisté.", color=0xFF0000))
+    if uid in tempetes:
+        return await ctx.reply("🌪️ Cette personne est sous tempête, utilise `/untempete`.")
+    if uid not in blacklist:
+        return await ctx.reply(embed=discord.Embed(description="❌ Cet ID n'est pas blacklisté.", color=0xFF0000))
     try: user = await bot.fetch_user(int(uid))
     except: return await ctx.reply("❌ ID invalide.")
     try: await ctx.guild.unban(user, reason=f"[UNBL] par {ctx.author}")
@@ -666,16 +768,22 @@ async def unbl_cmd(ctx, user_id: str = None):
     except discord.Forbidden: return await ctx.reply("❌ Permissions insuffisantes.")
     data = blacklist.pop(uid); save(BL_FILE, blacklist)
     invite = await make_invite(ctx.guild)
-    desc = f"Ta blacklist sur **{ctx.guild.name}** a été levée."
+    desc = f"Ta blacklist sur **{ctx.guild.name}** a été levée.\nTu peux désormais rejoindre à nouveau le serveur."
     if invite: desc += f"\n\n🔗 {invite}"
-    dm_ok = await try_dm(user, discord.Embed(title="✅ Blacklist levée", description=desc, color=0x57F287))
-    e = discord.Embed(title="✅ UNBL", color=0x57F287, timestamp=datetime.now(timezone.utc))
-    e.add_field(name="👤",                value=f"`{user}` (`{uid}`)", inline=True)
-    e.add_field(name="🛡️ Par",           value=ctx.author.mention, inline=True)
-    e.add_field(name="📩 MP",             value="✅" if dm_ok else "❌", inline=True)
+    dm_ok = await try_dm(user, discord.Embed(
+        title="✅ Blacklist levée — Shotojo",
+        description=desc,
+        color=0x57F287,
+        timestamp=datetime.now(timezone.utc)))
+    e = discord.Embed(title="✅ Unbl", color=0x57F287, timestamp=datetime.now(timezone.utc))
+    e.add_field(name="👤 Membre",          value=f"`{user}` (`{uid}`)", inline=True)
+    e.add_field(name="🛡️ Par",            value=f"{ctx.author.mention}\n`{ctx.author.id}`", inline=True)
+    e.add_field(name="📩 MP",              value="✅" if dm_ok else "❌", inline=True)
     e.add_field(name="📝 Raison initiale", value=data["raison"], inline=False)
     await log(ctx.guild, e)
-    await ctx.reply(embed=discord.Embed(description=f"✅ **{user}** retiré de la blacklist et débanni.", color=0x57F287))
+    await ctx.reply(embed=discord.Embed(
+        description=f"✅ **{user}** retiré de la blacklist et débanni.",
+        color=0x57F287))
 
 
 # -banpanel
@@ -700,7 +808,7 @@ async def maintenance_cmd(ctx, mode: str = None):
     desc  = "Bot en Ne pas déranger." if maintenance else "Bot de nouveau en ligne."
     await ctx.reply(embed=discord.Embed(title=title, description=desc, color=color))
     e = discord.Embed(title=title, color=color, timestamp=datetime.now(timezone.utc))
-    e.add_field(name="🛡️ Par", value=ctx.author.mention)
+    e.add_field(name="🛡️ Par", value=f"{ctx.author.mention}\n`{ctx.author.id}`")
     await log(ctx.guild, e)
 
 # ════════════════════════════════════════════════
@@ -717,8 +825,12 @@ async def tempmute_cmd(ctx, user_id: str = None):
     except: return await ctx.reply("❌ Membre introuvable.")
     if member.id == ctx.author.id: return await ctx.reply("❌ Tu ne peux pas te muter toi-même.")
     if is_sys_plus(member.id):     return await ctx.reply("❌ Tu ne peux pas muter un Sys+.")
-    e = discord.Embed(title=f"🔇 Tempmute — {member.display_name}",
-        description=f"Membre : {member.mention} (`{member.id}`)\nChoisis une raison :", color=0xFF6600)
+    e = discord.Embed(
+        title=f"🔇 Tempmute — {member.display_name}",
+        description=f"**Membre :** {member.mention} (`{member.id}`)\nSélectionne une raison :",
+        color=0xFF6600,
+        timestamp=datetime.now(timezone.utc))
+    e.set_thumbnail(url=member.display_avatar.url)
     view = MuteReasonView(ctx.author.id, member)
     msg  = await ctx.reply(embed=e, view=view)
     view.message = msg
@@ -734,8 +846,12 @@ async def warn_cmd(ctx, user_id: str = None):
     except: return await ctx.reply("❌ Membre introuvable.")
     if member.id == ctx.author.id: return await ctx.reply("❌ Tu ne peux pas te warn toi-même.")
     if is_sys_plus(member.id):     return await ctx.reply("❌ Tu ne peux pas warn un Sys+.")
-    e = discord.Embed(title=f"⚠️ Warn — {member.display_name}",
-        description=f"Membre : {member.mention} (`{member.id}`)\nChoisis une raison :", color=0xFFC107)
+    e = discord.Embed(
+        title=f"⚠️ Warn — {member.display_name}",
+        description=f"**Membre :** {member.mention} (`{member.id}`)\nSélectionne une raison :",
+        color=0xFFC107,
+        timestamp=datetime.now(timezone.utc))
+    e.set_thumbnail(url=member.display_avatar.url)
     view = WarnReasonView(ctx.author.id, member)
     msg  = await ctx.reply(embed=e, view=view)
     view.message = msg
@@ -749,18 +865,37 @@ async def unmute_cmd(ctx, user_id: str = None):
         uid_int = int(str(user_id).strip("<@!>"))
         member  = ctx.guild.get_member(uid_int) or await ctx.guild.fetch_member(uid_int)
     except: return await ctx.reply("❌ Membre introuvable.")
-    try: await member.timeout(None, reason=f"[UNMUTE] par {ctx.author}")
-    except discord.Forbidden: return await ctx.reply("❌ Permissions insuffisantes.")
+    muted_role = ctx.guild.get_role(MUTED_ROLE_ID)
+    if not muted_role:
+        return await ctx.reply("❌ Rôle Muted introuvable. Vérifie l'ID dans la config.")
+    try:
+        await member.remove_roles(muted_role, reason=f"[UNMUTE] par {ctx.author}")
+    except discord.Forbidden:
+        return await ctx.reply("❌ Permissions insuffisantes.")
+
+    now = now_ts()
+    for sid, s in sanctions_db["sanctions"].items():
+        if s["user_id"] == str(uid_int) and s["type"] == "tempmute" and s.get("active"):
+            sanctions_db["sanctions"][sid]["active"] = False
+    save_sanctions()
+
     invite = await make_invite(ctx.guild)
-    desc   = f"Ton mute sur **{ctx.guild.name}** a été levé."
+    desc = f"Ton mute sur **{ctx.guild.name}** a été levé."
     if invite: desc += f"\n\n🔗 {invite}"
-    dm_ok = await try_dm(member, discord.Embed(title="✅ Mute levé", description=desc, color=0x57F287))
+    dm_ok = await try_dm(member, discord.Embed(
+        title="✅ Mute levé — Shotojo",
+        description=desc,
+        color=0x57F287,
+        timestamp=datetime.now(timezone.utc)))
     e = discord.Embed(title="✅ Unmute", color=0x57F287, timestamp=datetime.now(timezone.utc))
-    e.add_field(name="👤",     value=f"{member.mention} (`{member.id}`)", inline=True)
-    e.add_field(name="🛡️ Par", value=ctx.author.mention, inline=True)
-    e.add_field(name="📩 MP",  value="✅" if dm_ok else "❌", inline=True)
+    e.add_field(name="👤 Membre", value=f"{member.mention}\n`{member.id}`", inline=True)
+    e.add_field(name="🛡️ Par",   value=f"{ctx.author.mention}\n`{ctx.author.id}`", inline=True)
+    e.add_field(name="📩 MP",     value="✅" if dm_ok else "❌", inline=True)
+    e.set_thumbnail(url=member.display_avatar.url)
     await log(ctx.guild, e)
-    await ctx.reply(embed=discord.Embed(description=f"✅ **{member}** n'est plus muté.", color=0x57F287))
+    await ctx.reply(embed=discord.Embed(
+        description=f"✅ **{member}** n'est plus muté.",
+        color=0x57F287))
 
 
 # -sanction
@@ -772,16 +907,22 @@ async def sanction_cmd(ctx, user_id: str = None):
     try: user = await bot.fetch_user(int(uid)); name = str(user); avatar = user.display_avatar.url
     except: name = f"Inconnu ({uid})"; avatar = None
     type_emoji = {"tempmute": "🔇", "warn": "⚠️"}
-    e = discord.Embed(title=f"📋 Sanctions — {name}", color=0x5865F2, timestamp=datetime.now(timezone.utc))
+    e = discord.Embed(
+        title=f"📋 Historique des sanctions — {name}",
+        color=0x5865F2,
+        timestamp=datetime.now(timezone.utc))
     if not sanctions:
         e.description = "Aucune sanction enregistrée."
     else:
         lines = []
         for s in sanctions[-15:]:
             em     = type_emoji.get(s["type"], "❓")
-            status = "✅" if s.get("active") else "⬛"
-            dur    = f" ({s['duree_str']})" if s.get("duree_str") else ""
-            lines.append(f"`#{s['id']}` {status} {em} **{s['type']}**{dur} — {s['raison']} — {fmt_rel(s['at'])}")
+            status = "🟢" if s.get("active") else "⬛"
+            dur    = f" (`{s['duree_str']}`)" if s.get("duree_str") else ""
+            lines.append(
+                f"`#{s['id']}` {status} {em} **{s['type'].upper()}**{dur}\n"
+                f"╰ {s['raison']} · {fmt_rel(s['at'])}"
+            )
         e.description = "\n".join(lines)
         e.set_footer(text=f"Total : {len(sanctions)} sanction(s)")
     if avatar: e.set_thumbnail(url=avatar)
@@ -791,29 +932,28 @@ async def sanction_cmd(ctx, user_id: str = None):
 # -infosanction
 @bot.command(name="infosanction")
 async def infosanction_cmd(ctx, sanction_id: str = None, user_id: str = None):
-    if not sanction_id or not user_id: return await ctx.reply("❌ `-infosanction <n°> <id>`")
+    if not sanction_id or not user_id:
+        return await ctx.reply("❌ `-infosanction <n°> <id>`")
     s = get_sanction(sanction_id)
     if not s or s["user_id"] != str(user_id).strip():
         return await ctx.reply(embed=discord.Embed(description="❌ Sanction introuvable.", color=0xFF0000))
     try: user = await bot.fetch_user(int(s["user_id"])); name = str(user); avatar = user.display_avatar.url
     except: name = f"Inconnu ({s['user_id']})"; avatar = None
-    try:
-        mod = await bot.fetch_user(int(s["by_id"])); mod_str = f"{mod.mention} (`{mod}`)"
-    except: mod_str = s["by"]
     type_emoji = {"tempmute": "🔇", "warn": "⚠️"}
     color      = {"tempmute": 0xFF6600, "warn": 0xFFC107}
     e = discord.Embed(
-        title=f"{type_emoji.get(s['type'], '❓')} Sanction #{s['id']}",
+        title=f"{type_emoji.get(s['type'], '❓')} Sanction #{s['id']} — {s['type'].upper()}",
         color=color.get(s["type"], 0x5865F2),
         timestamp=datetime.fromtimestamp(s["at"], timezone.utc))
-    e.add_field(name="👤 Membre",   value=f"`{name}` (`{s['user_id']}`)", inline=True)
-    e.add_field(name="📋 Type",     value=s["type"].upper(), inline=True)
-    e.add_field(name="🔘 Statut",   value="✅ Active" if s.get("active") else "⬛ Expirée", inline=True)
-    e.add_field(name="📝 Raison",   value=s["raison"], inline=False)
-    e.add_field(name="🛡️ Par",     value=mod_str, inline=True)
-    e.add_field(name="📅 Date",     value=f"{fmt(s['at'])}\n{fmt_rel(s['at'])}", inline=True)
-    if s.get("duree_str"): e.add_field(name="⏱️ Durée", value=f"`{s['duree_str']}`", inline=True)
-    if s.get("until"):     e.add_field(name="🔓 Fin",   value=f"{fmt(s['until'])}\n{fmt_rel(s['until'])}", inline=True)
+    e.add_field(name="👤 Membre",  value=f"`{name}`\n`{s['user_id']}`", inline=True)
+    e.add_field(name="🛡️ Par",    value=f"<@{s['by_id']}>\n`{s['by_id']}`", inline=True)
+    e.add_field(name="🔘 Statut",  value="🟢 Active" if s.get("active") else "⬛ Expirée", inline=True)
+    e.add_field(name="📅 Date",    value=f"{fmt(s['at'])}\n{fmt_rel(s['at'])}", inline=True)
+    if s.get("duree_str"):
+        e.add_field(name="⏱️ Durée", value=f"`{s['duree_str']}`", inline=True)
+    if s.get("until"):
+        e.add_field(name="🔓 Fin",   value=f"{fmt(s['until'])}\n{fmt_rel(s['until'])}", inline=True)
+    e.add_field(name="📝 Raison",  value=s["raison"], inline=False)
     if avatar: e.set_thumbnail(url=avatar)
     await ctx.reply(embed=e)
 
@@ -821,17 +961,20 @@ async def infosanction_cmd(ctx, sanction_id: str = None, user_id: str = None):
 # -delsanction (Sys+ only)
 @bot.command(name="delsanction")
 async def delsanction_cmd(ctx, sanction_id: str = None, user_id: str = None):
-    if not sanction_id or not user_id: return await ctx.reply("❌ `-delsanction <n°> <id>`")
+    if not sanction_id or not user_id:
+        return await ctx.reply("❌ `-delsanction <n°> <id>`")
     s = get_sanction(sanction_id)
     if not s or s["user_id"] != str(user_id).strip():
         return await ctx.reply(embed=discord.Embed(description="❌ Sanction introuvable.", color=0xFF0000))
     sanctions_db["sanctions"].pop(str(sanction_id))
     save_sanctions()
-    await ctx.reply(embed=discord.Embed(description=f"🗑️ Sanction `#{sanction_id}` supprimée.", color=0x57F287))
+    await ctx.reply(embed=discord.Embed(
+        description=f"🗑️ Sanction `#{sanction_id}` supprimée.",
+        color=0x57F287))
     e = discord.Embed(title="🗑️ Sanction supprimée", color=0xFF6600, timestamp=datetime.now(timezone.utc))
     e.add_field(name="🆔 Sanction", value=f"`#{sanction_id}`", inline=True)
-    e.add_field(name="📋 Type",     value=s["type"], inline=True)
-    e.add_field(name="🛡️ Par",     value=ctx.author.mention, inline=True)
+    e.add_field(name="📋 Type",     value=s["type"].upper(), inline=True)
+    e.add_field(name="🛡️ Par",     value=f"{ctx.author.mention}\n`{ctx.author.id}`", inline=True)
     await log(ctx.guild, e)
 
 # ════════════════════════════════════════════════
@@ -843,38 +986,48 @@ async def help_cmd(ctx):
     sys_plus = is_sys_plus(ctx.author.id)
     petale   = is_petale_or_plus(ctx.author)
     if sys_plus:
-        e = discord.Embed(title="📖 Aide — Commandes", color=0x5865F2, timestamp=datetime.now(timezone.utc))
+        e = discord.Embed(
+            title="📖 Commandes — Sys+",
+            color=0x5865F2,
+            timestamp=datetime.now(timezone.utc))
         e.add_field(name="🚫 Bans & Blacklist", inline=False, value=(
-            "`+bl <id> <raison>` — Blacklist + ban permanent\n"
+            "`+bl <id> <raison>` — Blacklist + ban IP permanent\n"
             "`&unbl <id>` — Retire une blacklist\n"
             "`-blinfo <id>` — Infos blacklist\n"
             "`+ban <id> <durée> <raison>` — Ban temporaire *(ex: 1h30m)*\n"
             "`-baninfo <id>` — Infos tempban\n"
             "`-banpanel` — Panel de tous les bans"))
         e.add_field(name="🌪️ Tempête", inline=False, value=(
-            "`/tempete <id> <raison>` — Ban définitif\n"
-            "`/tempete-info <id>` — Infos\n"
+            "`/tempete <id> <raison>` — Ban IP définitif\n"
+            "`/tempete-info <id>` — Infos tempête\n"
             "`/untempete <id>` — Retire une tempête\n"
             "`/unban-all` — Déban tout sauf BL & tempêtes"))
-        e.add_field(name="🪙 Modération", inline=False, value=(
-            "`-tempmute <id>` — Mute temporaire (panel)\n"
+        e.add_field(name="🔇 Modération", inline=False, value=(
+            "`-tempmute <id>` — Mute temporaire (rôle Muted)\n"
             "`-unmute <id>` — Unmute\n"
-            "`-warn <id>` — Avertissement (panel)\n"
+            "`-warn <id>` — Avertissement\n"
             "`-sanction <id>` — Historique des sanctions\n"
             "`-infosanction <n°> <id>` — Détails d'une sanction\n"
             "`-delsanction <n°> <id>` — Supprimer une sanction"))
-        e.add_field(name="⚙️ Bot", inline=False, value="`-maintenance [on|off]` — Mode maintenance")
+        e.add_field(name="⚙️ Bot", inline=False,
+                    value="`-maintenance [on|off]` — Mode maintenance")
     elif petale:
-        e = discord.Embed(title="📖 Aide — Commandes", color=0xC0C0C0, timestamp=datetime.now(timezone.utc))
-        e.add_field(name="🪙 Permissions Contributeur", inline=False, value=(
-            "`-tempmute <id>` — Mute temporaire (panel)\n"
+        e = discord.Embed(
+            title="📖 Commandes — Contributeur",
+            color=0xC0C0C0,
+            timestamp=datetime.now(timezone.utc))
+        e.add_field(name="🔇 Modération", inline=False, value=(
+            "`-tempmute <id>` — Mute temporaire (rôle Muted)\n"
             "`-unmute <id>` — Unmute\n"
-            "`-warn <id>` — Avertissement (panel)\n"
+            "`-warn <id>` — Avertissement\n"
             "`-sanction <id>` — Historique des sanctions\n"
             "`-infosanction <n°> <id>` — Détails d'une sanction"))
     else:
-        e = discord.Embed(title="📖 Aide", description="Tu n'as accès à aucune commande.",
-                          color=0x5865F2, timestamp=datetime.now(timezone.utc))
+        e = discord.Embed(
+            title="📖 Aide",
+            description="Tu n'as accès à aucune commande.",
+            color=0x5865F2,
+            timestamp=datetime.now(timezone.utc))
     e.set_footer(text=f"Demandé par {ctx.author}", icon_url=ctx.author.display_avatar.url)
     await ctx.reply(embed=e)
 
@@ -882,7 +1035,7 @@ async def help_cmd(ctx):
 # SLASH COMMANDS — Sys+
 # ════════════════════════════════════════════════
 
-@tree.command(name="tempete", description="Tempête un membre — ban définitif [Sys+]")
+@tree.command(name="tempete", description="Tempête un membre — ban IP définitif [Sys+]")
 @app_commands.describe(user_id="ID Discord", raison="Raison")
 async def tempete_slash(i: discord.Interaction, user_id: str, raison: str = "Aucune raison"):
     if not is_sys_plus(i.user.id):
@@ -893,22 +1046,34 @@ async def tempete_slash(i: discord.Interaction, user_id: str, raison: str = "Auc
     tempetes[uid]  = {"raison": raison, "by": str(i.user), "by_id": i.user.id, "at": now}
     blacklist[uid] = {"raison": f"[TEMPÊTE] {raison}", "by": str(i.user), "by_id": i.user.id, "at": now}
     save(TEMPETE_FILE, tempetes); save(BL_FILE, blacklist)
-    try:
-        await user.send(embed=discord.Embed(title="🌪️ Tu as été mis sous tempête",
-            description=(f"Serveur : **{i.guild.name}**\nRaison : {raison}\nPar : {i.user}\n"
-                         f"Date : {fmt(now)}\n\nSanction permanente et définitive.\n\n"
-                         f"Si tu penses que c'est un abus, contacte <@{ABUSE_BOT_ID}>."), color=0xFF0000))
+
+    dm_e = discord.Embed(
+        title="🌪️ Tu as été mis(e) sous Tempête — Shotojo",
+        color=0xFF0000,
+        timestamp=datetime.now(timezone.utc))
+    dm_e.add_field(name="📋 Raison",  value=raison, inline=False)
+    dm_e.add_field(name="📅 Date",    value=fmt(now), inline=True)
+    dm_e.add_field(name="🌐 Type",    value="Ban IP permanent et définitif", inline=True)
+    dm_e.add_field(name="📩 Contact", value=dm_footer_sanctions(), inline=False)
+    try: await user.send(embed=dm_e)
     except: pass
-    try: await i.guild.ban(user, reason=f"[TEMPÊTE] {raison}", delete_message_days=7)
-    except discord.Forbidden: return await i.response.send_message("❌ Permissions insuffisantes.", ephemeral=True)
-    e = discord.Embed(title="🌪️ TEMPÊTE", color=0xE74C3C, timestamp=datetime.now(timezone.utc))
-    e.add_field(name="👤",        value=f"`{user}` (`{user_id}`)", inline=True)
-    e.add_field(name="🛡️ Par",   value=i.user.mention, inline=True)
-    e.add_field(name="📅",        value=f"{fmt(now)}\n{fmt_rel(now)}", inline=True)
+
+    try: await i.guild.ban(user, reason=f"[TEMPÊTE — Ban IP] {raison}", delete_message_days=7)
+    except discord.Forbidden:
+        return await i.response.send_message("❌ Permissions insuffisantes.", ephemeral=True)
+
+    e = discord.Embed(title="🌪️ Tempête — Ban IP", color=0xE74C3C, timestamp=datetime.now(timezone.utc))
+    e.add_field(name="👤 Membre", value=f"`{user}` (`{user_id}`)", inline=True)
+    e.add_field(name="🛡️ Par",   value=f"{i.user.mention}\n`{i.user.id}`", inline=True)
+    e.add_field(name="📅 Date",   value=f"{fmt(now)}\n{fmt_rel(now)}", inline=True)
+    e.add_field(name="🌐 Type",   value="Ban IP permanent et définitif", inline=True)
     e.add_field(name="📝 Raison", value=raison, inline=False)
+    e.set_thumbnail(url=user.display_avatar.url)
     await log(i.guild, e)
     await i.response.send_message(embed=discord.Embed(
-        title="🌪️ Tempête exécutée", description=f"**{user}** sous tempête.\n📝 {raison}", color=0xE74C3C))
+        title="🌪️ Tempête exécutée",
+        description=f"**{user}** (`{user_id}`) mis sous tempête · Ban IP\n📝 {raison}",
+        color=0xE74C3C))
 
 
 @tree.command(name="tempete-info", description="Infos sur une tempête [Sys+]")
@@ -918,13 +1083,15 @@ async def tempete_info_slash(i: discord.Interaction, user_id: str):
         return await i.response.send_message(await sys_violation(i.user), ephemeral=True)
     uid = str(user_id).strip(); data = tempetes.get(uid)
     if not data:
-        return await i.response.send_message(embed=discord.Embed(description="❌ Aucune tempête pour cet ID.", color=0xFF0000), ephemeral=True)
+        return await i.response.send_message(
+            embed=discord.Embed(description="❌ Aucune tempête pour cet ID.", color=0xFF0000), ephemeral=True)
     try: user = await bot.fetch_user(int(uid)); name = str(user); avatar = user.display_avatar.url
     except: name = f"Inconnu ({uid})"; avatar = None
-    e = discord.Embed(title="🌪️ Infos Tempête", color=0xE74C3C, timestamp=datetime.now(timezone.utc))
-    e.add_field(name="👤",        value=f"`{name}` (`{uid}`)", inline=True)
-    e.add_field(name="🛡️ Par",   value=data["by"], inline=True)
-    e.add_field(name="📅",        value=f"{fmt(data['at'])}\n{fmt_rel(data['at'])}", inline=True)
+    e = discord.Embed(title="🌪️ Infos Tempête — Ban IP", color=0xE74C3C, timestamp=datetime.now(timezone.utc))
+    e.add_field(name="👤 Membre", value=f"`{name}`\n`{uid}`", inline=True)
+    e.add_field(name="🛡️ Par",   value=f"<@{data['by_id']}>\n`{data['by_id']}`", inline=True)
+    e.add_field(name="📅 Date",   value=f"{fmt(data['at'])}\n{fmt_rel(data['at'])}", inline=True)
+    e.add_field(name="🌐 Type",   value="Ban IP permanent et définitif", inline=True)
     e.add_field(name="📝 Raison", value=data["raison"], inline=False)
     if avatar: e.set_thumbnail(url=avatar)
     await i.response.send_message(embed=e)
@@ -937,26 +1104,34 @@ async def untempete_slash(i: discord.Interaction, user_id: str):
         return await i.response.send_message(await sys_violation(i.user), ephemeral=True)
     uid = str(user_id).strip()
     if uid not in tempetes:
-        return await i.response.send_message(embed=discord.Embed(description="❌ Aucune tempête pour cet ID.", color=0xFF0000), ephemeral=True)
+        return await i.response.send_message(
+            embed=discord.Embed(description="❌ Aucune tempête pour cet ID.", color=0xFF0000), ephemeral=True)
     try: user = await bot.fetch_user(int(uid))
     except: return await i.response.send_message("❌ ID invalide.", ephemeral=True)
     try: await i.guild.unban(user, reason=f"[UNTEMPÊTE] par {i.user}")
     except discord.NotFound: pass
-    except discord.Forbidden: return await i.response.send_message("❌ Permissions insuffisantes.", ephemeral=True)
+    except discord.Forbidden:
+        return await i.response.send_message("❌ Permissions insuffisantes.", ephemeral=True)
     data = tempetes.pop(uid); blacklist.pop(uid, None)
     save(TEMPETE_FILE, tempetes); save(BL_FILE, blacklist)
     invite = await make_invite(i.guild)
-    desc   = f"Ta tempête sur **{i.guild.name}** a été levée."
+    desc = f"Ta tempête sur **{i.guild.name}** a été levée.\nTu peux désormais rejoindre à nouveau le serveur."
     if invite: desc += f"\n\n🔗 {invite}"
-    dm_ok = await try_dm(user, discord.Embed(title="✅ Tempête levée", description=desc, color=0x57F287))
-    e = discord.Embed(title="✅ UNTEMPÊTE", color=0x57F287, timestamp=datetime.now(timezone.utc))
-    e.add_field(name="👤",                value=f"`{user}` (`{uid}`)", inline=True)
-    e.add_field(name="🛡️ Par",           value=i.user.mention, inline=True)
-    e.add_field(name="📩 MP",             value="✅" if dm_ok else "❌", inline=True)
+    dm_ok = await try_dm(user, discord.Embed(
+        title="✅ Tempête levée — Shotojo",
+        description=desc,
+        color=0x57F287,
+        timestamp=datetime.now(timezone.utc)))
+    e = discord.Embed(title="✅ Untempête", color=0x57F287, timestamp=datetime.now(timezone.utc))
+    e.add_field(name="👤 Membre",          value=f"`{user}` (`{uid}`)", inline=True)
+    e.add_field(name="🛡️ Par",            value=f"{i.user.mention}\n`{i.user.id}`", inline=True)
+    e.add_field(name="📩 MP",              value="✅" if dm_ok else "❌", inline=True)
     e.add_field(name="📝 Raison initiale", value=data["raison"], inline=False)
     await log(i.guild, e)
     await i.response.send_message(embed=discord.Embed(
-        title="✅ Tempête retirée", description=f"**{user}** n'est plus sous tempête.", color=0x57F287))
+        title="✅ Tempête retirée",
+        description=f"**{user}** n'est plus sous tempête.",
+        color=0x57F287))
 
 
 @tree.command(name="unban-all", description="Déban tout sauf blacklist et tempêtes [Sys+]")
@@ -975,15 +1150,19 @@ async def unban_all_slash(i: discord.Interaction):
         except: failed += 1
         await asyncio.sleep(0.5)
     save(TEMPBAN_FILE, tempbans)
-    e = discord.Embed(title="🔓 UNBAN-ALL", color=0x57F287, timestamp=datetime.now(timezone.utc))
-    e.add_field(name="🛡️ Par",    value=i.user.mention, inline=True)
-    e.add_field(name="✅ Débannis", value=str(unbanned),  inline=True)
-    e.add_field(name="🚫 Ignorés", value=str(skipped),   inline=True)
+    e = discord.Embed(title="🔓 Unban-All", color=0x57F287, timestamp=datetime.now(timezone.utc))
+    e.add_field(name="🛡️ Par",    value=f"{i.user.mention}\n`{i.user.id}`", inline=True)
+    e.add_field(name="✅ Débannis", value=str(unbanned), inline=True)
+    e.add_field(name="🚫 Ignorés", value=str(skipped),  inline=True)
     if failed: e.add_field(name="⚠️ Échecs", value=str(failed), inline=True)
     await log(i.guild, e)
     await i.followup.send(embed=discord.Embed(
-        title="🔓 Unban-all terminé",
-        description=f"✅ {unbanned} débanni(s)\n🚫 {skipped} ignoré(s)" + (f"\n⚠️ {failed} échec(s)" if failed else ""),
+        title="🔓 Unban-All terminé",
+        description=(
+            f"✅ {unbanned} débanni(s)\n"
+            f"🚫 {skipped} ignoré(s) (BL/Tempête)" +
+            (f"\n⚠️ {failed} échec(s)" if failed else "")
+        ),
         color=0x57F287))
 
 # ════════════════════════════════════════════════
