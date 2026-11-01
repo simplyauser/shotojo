@@ -40,6 +40,7 @@ PUBLIC_CMDS      = {"help"}
 PREFIX_RULES = {
     "bl":           "+",
     "ban":          "+",
+    "unban":        "+",
     "unbl":         "&",
     "baninfo":      "-",
     "blinfo":       "-",
@@ -206,8 +207,18 @@ def is_petale_or_plus(member):
     if not hasattr(member, "roles"): return False
     return any(r.id in CONTRIBUTOR_ROLE_IDS for r in member.roles)
 
-def fmt(ts):     return f"<t:{int(ts)}:F>"
-def fmt_rel(ts): return f"<t:{int(ts)}:R>"
+# Discord timestamps are capped at year ~3000 (Unix ts 32503680000)
+TS_MAX = 32503680000
+
+def fmt(ts):
+    ts = int(ts)
+    if ts > TS_MAX: return "♾️  Permanent"
+    return f"<t:{ts}:F>"
+
+def fmt_rel(ts):
+    ts = int(ts)
+    if ts > TS_MAX: return "♾️"
+    return f"<t:{ts}:R>"
 
 def parse_duration(s):
     total = 0
@@ -840,6 +851,67 @@ async def ban_cmd(ctx, user_id: str = None, duree: str = None, *, raison: str = 
     await ctx.reply(embed=result_e)
 
 
+@bot.command(name="unban")
+async def unban_cmd(ctx, user_id: str = None, *, raison: str = "Aucune raison"):
+    if not user_id: return await ctx.reply(embed=emb_err("`+unban <id> [raison]`"))
+    uid = str(user_id).strip()
+
+    # Bloqué si blacklist ou tempête
+    if uid in blacklist:
+        return await ctx.reply(embed=emb_warn_ui(
+            "Cet utilisateur est **blacklisté**. Utilise `&unbl` pour lever la blacklist d'abord.",
+            "Unban bloqué"
+        ))
+    if uid in tempetes:
+        return await ctx.reply(embed=emb_warn_ui(
+            "Cet utilisateur est sous **Tempête**. Utilise `/untempete` pour la lever d'abord.",
+            "Unban bloqué"
+        ))
+
+    try: uid_int = int(uid); user = await bot.fetch_user(uid_int)
+    except: return await ctx.reply(embed=emb_err("ID invalide."))
+
+    try:
+        await ctx.guild.unban(user, reason=f"[UNBAN]  {raison}  par {ctx.author}")
+    except discord.NotFound:
+        return await ctx.reply(embed=emb_err("Cet utilisateur n'est pas banni."))
+    except discord.Forbidden:
+        return await ctx.reply(embed=emb_err("Permissions insuffisantes."))
+
+    # Nettoie le tempban s'il existait
+    was_tempban = uid in tempbans
+    tempbans.pop(uid, None)
+    if was_tempban: save(TEMPBAN_FILE, tempbans)
+
+    invite = await make_invite(ctx.guild)
+    desc   = f"Tu as été débanni(e) de **{ctx.guild.name}**.\nTu peux désormais rejoindre le serveur."
+    if invite: desc += f"\n\n🔗 {invite}"
+    dm_ok = await try_dm(user, discord.Embed(
+        title="✅  Tu as été débanni(e)  ·  Shotojo",
+        description=desc,
+        color=C["ok"], timestamp=_ts(),
+    ))
+
+    now = now_ts()
+    log_e = emb_log("✅  Unban", C["ok"])
+    log_e.add_field(name="👤 Membre",  value=f"`{user}` (`{uid_int}`)",                     inline=True)
+    log_e.add_field(name="🛡️ Par",    value=f"{ctx.author.mention}\n`{ctx.author.id}`",     inline=True)
+    log_e.add_field(name="📩 MP",      value="✅" if dm_ok else "❌",                       inline=True)
+    log_e.add_field(name="📅 Date",    value=f"{fmt(now)}\n{fmt_rel(now)}",                  inline=True)
+    log_e.add_field(name="📝 Raison",  value=raison,                                          inline=False)
+    if was_tempban: log_e.add_field(name="🔨 Tempban", value="Supprimé du fichier",           inline=True)
+    log_e.set_thumbnail(url=user.display_avatar.url)
+    await log(ctx.guild, log_e)
+
+    result_e = discord.Embed(
+        title="✦  Unban effectué",
+        description=f"✅  **{user}** (`{uid_int}`) a été débanni.\n📝 {raison}",
+        color=C["ok"], timestamp=_ts(),
+    )
+    set_footer(result_e, ctx.author)
+    await ctx.reply(embed=result_e)
+
+
 @bot.command(name="baninfo")
 async def baninfo_cmd(ctx, user_id: str = None):
     if not user_id: return await ctx.reply(embed=emb_err("`-baninfo <id>`"))
@@ -1129,6 +1201,7 @@ async def help_cmd(ctx):
             "`&unbl <id>`  ·  Retire une blacklist\n"
             "`-blinfo <id>`  ·  Infos blacklist\n"
             "`+ban <id> <durée> <raison>`  ·  Ban temporaire\n"
+            "`+unban <id> [raison]`  ·  Déban un utilisateur\n"
             "`-baninfo <id>`  ·  Infos tempban\n"
             "`-banpanel`  ·  Panel de tous les bans"
         ))
