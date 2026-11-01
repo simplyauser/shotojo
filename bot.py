@@ -7,9 +7,9 @@ import os
 import re
 from datetime import datetime, timezone, timedelta
 
-# ════════════════════════════════════════════════
+
 #  CONFIG
-# ════════════════════════════════════════════════
+
 SYS_PLUS_IDS         = {1419320803199029402, 1514099294611701842}
 CONTRIBUTOR_ROLE_IDS = {1556148445041926174}
 GUILD_ID             = int(os.getenv("GUILD_ID"))
@@ -56,9 +56,9 @@ PREFIX_RULES = {
     "delsanction":  "-",
 }
 
-# ════════════════════════════════════════════════
+
 #  PALETTE DA
-# ════════════════════════════════════════════════
+
 C = {
     "bl":      0xFF2D55,
     "ban":     0xFF6B2B,
@@ -80,9 +80,9 @@ SEP = "┄" * 32
 def _ts():    return datetime.now(timezone.utc)
 def now_ts(): return _ts().timestamp()
 
-# ════════════════════════════════════════════════
-#  EMBED FACTORY
-# ════════════════════════════════════════════════
+
+#  EMBED 
+
 def _b(color: int) -> discord.Embed:
     return discord.Embed(color=color, timestamp=_ts())
 
@@ -124,9 +124,9 @@ def set_footer(e: discord.Embed, user=None):
         e.set_footer(text=f"Shotojo  ·  {now}")
     return e
 
-# ════════════════════════════════════════════════
+
 #  STORAGE
-# ════════════════════════════════════════════════
+
 def load(file):
     if os.path.exists(file):
         try:
@@ -169,9 +169,9 @@ def get_user_sanctions(user_id):
 def get_sanction(sid):
     return sanctions_db["sanctions"].get(str(sid))
 
-# ════════════════════════════════════════════════
+
 #  BOT
-# ════════════════════════════════════════════════
+
 async def get_prefix(bot, message): return ["+", "-", "&"]
 
 def make_activity():
@@ -198,9 +198,9 @@ async def apply_presence():
     else:
         await bot.change_presence(status=discord.Status.online, activity=make_activity())
 
-# ════════════════════════════════════════════════
-#  HELPERS
-# ════════════════════════════════════════════════
+
+#  AIDE
+
 def is_sys_plus(uid): return uid in SYS_PLUS_IDS
 
 def is_petale_or_plus(member):
@@ -208,7 +208,7 @@ def is_petale_or_plus(member):
     if not hasattr(member, "roles"): return False
     return any(r.id in CONTRIBUTOR_ROLE_IDS for r in member.roles)
 
-# Discord timestamps are capped at year ~3000 (Unix ts 32503680000)
+# Discord timestamps 
 TS_MAX = 32503680000
 
 def fmt(ts):
@@ -303,9 +303,9 @@ def dm_text_warn(raison: str, guild_name: str) -> str:
         f"Si tu veux contester, viens ici : {SUPPORT_INVITE}"
     )
 
-# ════════════════════════════════════════════════
+
 #  VIOLATIONS
-# ════════════════════════════════════════════════
+
 async def sys_violation(member):
     try:
         await member.timeout(timedelta(minutes=1), reason="Tentative de commande non autorisée")
@@ -329,9 +329,9 @@ async def not_sys_plus(ctx):
     msg = await sys_violation(ctx.author)
     await ctx.reply(msg)
 
-# ════════════════════════════════════════════════
-#  MIDDLEWARE
-# ════════════════════════════════════════════════
+
+#  uhq
+
 @bot.before_invoke
 async def check_prefix_and_perms(ctx):
     cmd_name = ctx.command.name if ctx.command else None
@@ -349,9 +349,9 @@ async def check_prefix_and_perms(ctx):
         await not_sys_plus(ctx)
         raise commands.CheckFailure()
 
-# ════════════════════════════════════════════════
-#  EVENTS
-# ════════════════════════════════════════════════
+
+#  EVENEMENTS
+
 @bot.event
 async def on_ready():
     await tree.sync()
@@ -374,9 +374,9 @@ async def on_member_join(member):
         except Exception:
             pass
 
-# ════════════════════════════════════════════════
-#  TASKS
-# ════════════════════════════════════════════════
+
+#  COMMANDES
+
 @tasks.loop(seconds=30)
 async def check_tempbans():
     now = now_ts()
@@ -430,9 +430,9 @@ async def check_mutes():
                     pass
     if changed: save_sanctions()
 
-# ════════════════════════════════════════════════
-#  PANEL VIEWS
-# ════════════════════════════════════════════════
+
+#  PANEL 
+
 class MuteReasonView(discord.ui.View):
     def __init__(self, author_id, target):
         super().__init__(timeout=60)
@@ -542,9 +542,9 @@ class WarnReasonView(discord.ui.View):
     async def reason_select(self, i: discord.Interaction, select: discord.ui.Select):
         await apply_warn(i, self.target, select.values[0])
 
-# ════════════════════════════════════════════════
-#  APPLY FUNCTIONS
-# ════════════════════════════════════════════════
+
+#  APPLIQUER LES FONCTIONSS
+
 async def apply_tempmute(i: discord.Interaction, member: discord.Member, raison: str, duree_str: str):
     seconds = parse_dur_str(duree_str)
     now     = now_ts()
@@ -636,9 +636,9 @@ async def apply_warn(i: discord.Interaction, member: discord.Member, raison: str
     set_footer(result_e, i.user)
     await i.response.edit_message(embed=result_e, view=None)
 
-# ════════════════════════════════════════════════
+
 #  BAN PANEL
-# ════════════════════════════════════════════════
+
 PANEL_PER_PAGE = 4
 CATS = {
     "tempban": ("🔨", "Tempban",    C["ban"]),
@@ -780,9 +780,9 @@ class BanPanel(discord.ui.View):
         self.entries = await collect_bans(i.guild)
         await i.response.edit_message(embed=await self.build(), view=self)
 
-# ════════════════════════════════════════════════
-#  COMMANDS  ·  Sys+
-# ════════════════════════════════════════════════
+
+#  COMMANDES    Sys+
+
 
 @bot.command(name="bl")
 async def bl_cmd(ctx, user_id: str = None, *, raison: str = "Aucune raison"):
@@ -1019,9 +1019,9 @@ async def maintenance_cmd(ctx, mode: str = None):
     log_e.add_field(name="🛡️ Par", value=f"{ctx.author.mention}\n`{ctx.author.id}`")
     await log(ctx.guild, log_e)
 
-# ════════════════════════════════════════════════
-#  COMMANDS  ·  Contributeur
-# ════════════════════════════════════════════════
+
+#  COMMANDS    Contributeur
+
 
 @bot.command(name="tempmute")
 async def tempmute_cmd(ctx, user_id: str = None):
@@ -1180,9 +1180,9 @@ async def delsanction_cmd(ctx, sanction_id: str = None, user_id: str = None):
     log_e.add_field(name="🛡️ Par",     value=f"{ctx.author.mention}\n`{ctx.author.id}`",     inline=True)
     await log(ctx.guild, log_e)
 
-# ════════════════════════════════════════════════
-#  COMMANDS  ·  Public
-# ════════════════════════════════════════════════
+
+#  COMMANDS    Publique
+
 
 @bot.command(name="help")
 async def help_cmd(ctx):
@@ -1242,9 +1242,9 @@ async def help_cmd(ctx):
     e.set_footer(text=f"Demandé par {ctx.author}", icon_url=ctx.author.display_avatar.url)
     await ctx.reply(embed=e)
 
-# ════════════════════════════════════════════════
-#  SLASH  ·  Sys+
-# ════════════════════════════════════════════════
+
+#  SLASH    Sys+
+
 
 @tree.command(name="tempete", description="Tempête un membre  ·  ban IP définitif [Sys+]")
 @app_commands.describe(user_id="ID Discord", raison="Raison")
@@ -1382,7 +1382,7 @@ async def unban_all_slash(i: discord.Interaction):
     set_footer(result_e, i.user)
     await i.followup.send(embed=result_e)
 
-# ════════════════════════════════════════════════
-#  LANCEMENT
-# ════════════════════════════════════════════════
+
+#  LANCEMENT tchiki brr
+
 bot.run(os.environ["TOKEN"])
