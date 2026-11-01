@@ -15,7 +15,8 @@ CONTRIBUTOR_ROLE_IDS = {1556148445041926174}
 GUILD_ID             = int(os.getenv("GUILD_ID"))
 LOGS_ID              = int(os.getenv("LOGS_CHANNEL_ID", "0"))
 MUTED_ROLE_ID        = 1560089046842216450
-SUPPORT_CONTACT_ID   = 1419320803199029402
+CIVILE_ROLE_ID       = 1564722577060929546
+SUPPORT_CONTACT_ID   = 1558327588710121554
 SUPPORT_INVITE       = "https://discord.gg/rAjayCuyyu"
 
 BL_FILE        = "blacklist.json"
@@ -270,9 +271,6 @@ async def make_invite(guild):
     except: pass
     return None
 
-def dm_footer_sanctions():
-    return f"Pour toute contestation, envoie un MP à <@{SUPPORT_CONTACT_ID}>."
-
 def dm_text_bl(raison: str, guild_name: str) -> str:
     return (
         f"Tu as été blacklisté(e) de **{guild_name}** définitivement pour la raison suivante : `{raison}`.\n\n"
@@ -294,9 +292,9 @@ def dm_text_ban(raison: str, guild_name: str, duree_str: str, until: float) -> s
 
 def dm_text_mute(raison: str, guild_name: str, duree_str: str, until: float) -> str:
     return (
-        f"Tu as été réduit(e) au silence sur **{guild_name}** pour la raison suivante : `{raison}`.\n"
-        f"Durée : **{duree_str}** · Fin : {fmt(until)}\n\n"
-        f"Si tu veux demander pardon viens ici : {SUPPORT_INVITE}"
+        f"Tu as été réduit(e) au silence sur **{guild_name}**.\n"
+        f"Raison : `{raison}`  ·  Durée : **{duree_str}**  ·  Fin : {fmt(until)}\n\n"
+        f"Si tu estimes que c'est un abus, envoie un MP à <@{SUPPORT_CONTACT_ID}>."
     )
 
 def dm_text_warn(raison: str, guild_name: str) -> str:
@@ -367,7 +365,6 @@ async def on_member_join(member):
     uid = str(member.id)
     if uid in blacklist:
         data = blacklist[uid]
-        # Envoie le DM AVANT le ban
         try:
             await member.send(dm_text_bl(data["raison"], member.guild.name))
         except Exception:
@@ -423,8 +420,12 @@ async def check_mutes():
                 try:
                     member     = guild.get_member(int(s["user_id"])) or await guild.fetch_member(int(s["user_id"]))
                     muted_role = guild.get_role(MUTED_ROLE_ID)
+                    civile_role = guild.get_role(CIVILE_ROLE_ID)
                     if muted_role and muted_role in member.roles:
                         await member.remove_roles(muted_role, reason="Mute expiré automatiquement")
+                    if civile_role and civile_role not in member.roles:
+                        await member.add_roles(civile_role, reason="Mute expiré automatiquement")
+                    await try_dm_text(member, "Vous avez de nouveau la permission de parler sur Shotojo 🌸 !")
                 except Exception:
                     pass
     if changed: save_sanctions()
@@ -549,10 +550,17 @@ async def apply_tempmute(i: discord.Interaction, member: discord.Member, raison:
     now     = now_ts()
     until   = now + seconds
 
-    muted_role = i.guild.get_role(MUTED_ROLE_ID)
+    muted_role  = i.guild.get_role(MUTED_ROLE_ID)
+    civile_role = i.guild.get_role(CIVILE_ROLE_ID)
     if not muted_role:
         return await i.response.edit_message(embed=emb_err("Rôle Muted introuvable. Vérifie la config."), view=None)
     try:
+        roles_to_remove = [muted_role] if muted_role not in member.roles else []
+        roles_to_add    = [muted_role]
+        if civile_role and civile_role in member.roles:
+            roles_to_remove.append(civile_role)
+        if roles_to_remove:
+            await member.remove_roles(*roles_to_remove, reason=f"[Mute]  {raison}")
         await member.add_roles(muted_role, reason=f"[Mute]  {raison}")
     except discord.Forbidden:
         return await i.response.edit_message(embed=emb_err("Permissions insuffisantes."), view=None)
@@ -565,7 +573,6 @@ async def apply_tempmute(i: discord.Interaction, member: discord.Member, raison:
         by=str(i.user), by_id=i.user.id, at=now,
     )
 
-    # DM texte simple
     dm_ok = await try_dm_text(member, dm_text_mute(raison, i.guild.name, duree_str, until))
 
     log_e = emb_log("🔇  Tempmute", C["mute"])
@@ -603,7 +610,6 @@ async def apply_warn(i: discord.Interaction, member: discord.Member, raison: str
         by=str(i.user), by_id=i.user.id, at=now,
     )
 
-    # DM texte simple
     dm_ok = await try_dm_text(member, dm_text_warn(raison, i.guild.name))
 
     log_e = emb_log("⚠️  Warn", C["warn"])
@@ -787,7 +793,6 @@ async def bl_cmd(ctx, user_id: str = None, *, raison: str = "Aucune raison"):
     blacklist[uid] = {"raison": raison, "by": str(ctx.author), "by_id": ctx.author.id, "at": now}
     save(BL_FILE, blacklist)
 
-    # DM AVANT le ban
     await try_dm_text(user, dm_text_bl(raison, ctx.guild.name))
 
     try: await ctx.guild.ban(user, reason=f"[BL · Ban IP]  {raison}", delete_message_days=0)
@@ -826,7 +831,6 @@ async def ban_cmd(ctx, user_id: str = None, duree: str = None, *, raison: str = 
     }
     save(TEMPBAN_FILE, tempbans)
 
-    # DM AVANT le ban
     await try_dm_text(user, dm_text_ban(raison, ctx.guild.name, duree_str, until))
 
     try: await ctx.guild.ban(user, reason=f"[Tempban  {duree_str}]  {raison}", delete_message_days=0)
@@ -856,7 +860,6 @@ async def unban_cmd(ctx, user_id: str = None, *, raison: str = "Aucune raison"):
     if not user_id: return await ctx.reply(embed=emb_err("`+unban <id> [raison]`"))
     uid = str(user_id).strip()
 
-    # Bloqué si blacklist ou tempête
     if uid in blacklist:
         return await ctx.reply(embed=emb_warn_ui(
             "Cet utilisateur est **blacklisté**. Utilise `&unbl` pour lever la blacklist d'abord.",
@@ -878,7 +881,6 @@ async def unban_cmd(ctx, user_id: str = None, *, raison: str = "Aucune raison"):
     except discord.Forbidden:
         return await ctx.reply(embed=emb_err("Permissions insuffisantes."))
 
-    # Nettoie le tempban s'il existait
     was_tempban = uid in tempbans
     tempbans.pop(uid, None)
     if was_tempban: save(TEMPBAN_FILE, tempbans)
@@ -1068,11 +1070,14 @@ async def unmute_cmd(ctx, user_id: str = None):
         uid_int = int(str(user_id).strip("<@!>"))
         member  = ctx.guild.get_member(uid_int) or await ctx.guild.fetch_member(uid_int)
     except: return await ctx.reply(embed=emb_err("Membre introuvable."))
-    muted_role = ctx.guild.get_role(MUTED_ROLE_ID)
+    muted_role  = ctx.guild.get_role(MUTED_ROLE_ID)
+    civile_role = ctx.guild.get_role(CIVILE_ROLE_ID)
     if not muted_role:
         return await ctx.reply(embed=emb_err("Rôle Muted introuvable. Vérifie la config."))
     try:
         await member.remove_roles(muted_role, reason=f"[UNMUTE]  par {ctx.author}")
+        if civile_role and civile_role not in member.roles:
+            await member.add_roles(civile_role, reason=f"[UNMUTE]  rôle Civile redonné")
     except discord.Forbidden:
         return await ctx.reply(embed=emb_err("Permissions insuffisantes."))
 
@@ -1082,14 +1087,8 @@ async def unmute_cmd(ctx, user_id: str = None):
             sanctions_db["sanctions"][sid]["active"] = False
     save_sanctions()
 
-    invite = await make_invite(ctx.guild)
-    desc   = f"Ton mute sur **{ctx.guild.name}** a été levé."
-    if invite: desc += f"\n\n🔗 {invite}"
-    dm_ok = await try_dm(member, discord.Embed(
-        title="✅  Mute levé  ·  Shotojo",
-        description=desc,
-        color=C["ok"], timestamp=_ts(),
-    ))
+    dm_ok = await try_dm_text(member, "Vous avez de nouveau la permission de parler sur Shotojo 🌸 !")
+
     log_e = emb_log("✅  Unmute", C["ok"])
     log_e.add_field(name="👤 Membre", value=f"{member.mention}\n`{member.id}`",        inline=True)
     log_e.add_field(name="🛡️ Par",   value=f"{ctx.author.mention}\n`{ctx.author.id}`", inline=True)
@@ -1260,7 +1259,6 @@ async def tempete_slash(i: discord.Interaction, user_id: str, raison: str = "Auc
     blacklist[uid] = {"raison": f"[TEMPÊTE]  {raison}", "by": str(i.user), "by_id": i.user.id, "at": now}
     save(TEMPETE_FILE, tempetes); save(BL_FILE, blacklist)
 
-    # DM AVANT le ban
     await try_dm_text(user, dm_text_tempete(raison, i.guild.name))
 
     try: await i.guild.ban(user, reason=f"[TEMPÊTE · Ban IP]  {raison}", delete_message_days=7)
